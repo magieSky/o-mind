@@ -1,8 +1,10 @@
 version: '3.8'
 
 services:
-  memory-server:
-    build: .
+  # O-Mind API 服务
+  o-mind-api:
+    image: o-mind:latest
+    container_name: o-mind-api
     ports:
       - "8000:8000"
     environment:
@@ -13,14 +15,19 @@ services:
       - MYSQL_DATABASE=memory
       - QDRANT_HOST=memory-qdrant
       - QDRANT_PORT=6333
+      # 多实例 API Keys (JSON 格式)
+      - MEMORY_API_KEYS={"key-prod-1":{"instance_id":"prod-1","name":"生产环境1"},"key-test-1":{"instance_id":"test-1","name":"测试环境1"},"key-dev-local":{"instance_id":"dev-local","name":"本地开发"}}
     depends_on:
       - memory-mysql
       - memory-qdrant
     networks:
-      - memory-network
+      - o-mind-network
+    restart: unless-stopped
 
+  # MySQL 数据库
   memory-mysql:
     image: mysql:8
+    container_name: memory-mysql
     environment:
       - MYSQL_ROOT_PASSWORD=123456
       - MYSQL_DATABASE=memory
@@ -29,20 +36,24 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
-      - memory-network
+      - o-mind-network
+    restart: unless-stopped
 
+  # Qdrant 向量数据库
   memory-qdrant:
     image: qdrant/qdrant:latest
+    container_name: memory-qdrant
     ports:
       - "6333:6333"
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     networks:
-      - memory-network
+      - o-mind-network
+    restart: unless-stopped
 
 networks:
-  memory-network:
+  o-mind-network:
     driver: bridge
 
 volumes:
