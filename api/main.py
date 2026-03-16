@@ -22,22 +22,29 @@ app = FastAPI(
 # ============ 多实例认证支持 ============
 
 # API Key 存储 (生产环境应该用数据库)
+# 格式: "key": {"instance_id": "xxx", "name": "xxx"}
 API_KEYS = {
-    # example: "key-prod-1": {"instance_id": "prod-1", "name": "生产环境1"},
-    # example: "key-test-1": {"instance_id": "test-1", "name": "测试环境1"},
+    "key-prod-1": {"instance_id": "prod-1", "name": "prod1"},
+    "key-test-1": {"instance_id": "test-1", "name": "test1"},
+    "key-dev-local": {"instance_id": "dev-local", "name": "dev1"},
 }
 
-# 从环境变量加载 API Keys
+# 从环境变量加载额外的 API Keys
 def load_api_keys():
-    """从环境变量加载 API Keys"""
-    keys_json = os.getenv("MEMORY_API_KEYS", "[]")
+    """从环境变量加载额外的 API Keys"""
     import json
-    try:
-        keys = json.loads(keys_json)
-        for key, info in keys.items():
-            API_KEYS[key] = info
-    except:
-        pass
+    keys_json = os.getenv("MEMORY_API_KEYS", "{}")
+    if keys_json:
+        try:
+            # 尝试修复 JSON 格式
+            import re
+            # 添加缺失的引号
+            fixed = re.sub(r'([{,])(\w+):', r'\1"\2":', keys_json)
+            keys = json.loads(fixed)
+            API_KEYS.update(keys)
+            print(f"[O-Mind] Loaded {len(API_KEYS)} API keys total")
+        except Exception as e:
+            print(f"[O-Mind] Failed to load API keys from env: {e}")
 
 load_api_keys()
 
