@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import { Layout, Menu, theme, Statistic, Card, Row, Col, Table, Tag, Button, Input, Modal, Form, message, Select, Badge, Space } from 'antd'
-import { MemoryOutlined, AppstoreOutlined, TeamOutlined, SettingOutlined, PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ApiOutlined } from '@ant-design/icons'
+import { InboxOutlined, AppstoreOutlined, TeamOutlined, SettingOutlined, PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ApiOutlined } from '@ant-design/icons'
 import axios from 'axios'
 
 const { Header, Content, Sider } = Layout
 const { Search } = Input
 
-// API 配置
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+// API 配置 - 使用相对路径，通过 nginx 代理
+const API_BASE = ''
 
 // 创建 axios 实例
 const api = axios.create({
