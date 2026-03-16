@@ -9,6 +9,8 @@
 - ⚡ **自动化钩子** - 无需手动操作，自动完成记忆存取
 - 🔍 **向量搜索** - 支持语义相似度搜索
 - 🐳 **Docker 部署** - 一键部署，支持 Docker Compose
+- 🌐 **管理界面** - 可视化管理记忆和 Agent
+- 🔑 **多实例隔离** - 支持多个 OpenClaw 实例，每个实例独立记忆
 
 ## 🏗️ 架构
 
@@ -26,6 +28,12 @@
 │   MySQL         │   Qdrant        │   Hooks             │
 │  (结构化存储)    │  (向量数据库)    │  (自动化)           │
 └─────────────────┴─────────────────┴───────────────────────┘
+                              │
+                              ▼
+                   ┌─────────────────────┐
+                   │   Admin UI (可选)   │
+                   │   http://localhost:3000 │
+                   └─────────────────────┘
 ```
 
 ## 🚀 快速开始
@@ -58,20 +66,9 @@ curl http://localhost:8000/health
 curl http://localhost:8000/api/memories
 ```
 
-### 4. 配置 OpenClaw
+### 4. 访问管理界面
 
-在 OpenClaw 容器中配置：
-
-```json
-{
-  "env": {
-    "MEMORY_SERVER_URL": "http://o-mind-api:8000"
-  },
-  "skills": {
-    "paths": ["/workspace/skills"]
-  }
-}
-```
+打开浏览器访问：http://localhost:3000
 
 ## 📡 API 接口
 
@@ -80,10 +77,11 @@ curl http://localhost:8000/api/memories
 ```bash
 curl -X POST http://localhost:8000/api/memories \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
   -d '{
     "content": "用户喜欢蓝色",
     "tags": ["preference", "color"],
-    "source": "test"
+    "agent_id": "memory-tester"
   }'
 ```
 
@@ -91,31 +89,24 @@ curl -X POST http://localhost:8000/api/memories \
 
 ```bash
 # 关键词搜索
-curl "http://localhost:8000/api/memories?q=喜欢"
+curl "http://localhost:8000/api/memories?q=喜欢" \
+  -H "X-API-Key: your-api-key"
 
-# 向量搜索
-curl "http://localhost:8000/api/memories/search/vector?query=用户偏好&limit=5"
+# 按 Agent 筛选
+curl "http://localhost:8000/api/memories?agent_id=agent-1" \
+  -H "X-API-Key: your-api-key"
 ```
 
-### 获取单条记忆
+### 其他接口
 
-```bash
-curl http://localhost:8000/api/memories/{id}
-```
-
-### 更新记忆
-
-```bash
-curl -X PUT http://localhost:8000/api/memories/{id} \
-  -H "Content-Type: application/json" \
-  -d '{"content": "新内容"}'
-```
-
-### 删除记忆
-
-```bash
-curl -X DELETE http://localhost:8000/api/memories/{id}
-```
+| 方法 | 路径 | 描述 |
+|------|------|------|
+| GET | /api/memories | 搜索记忆 |
+| GET | /api/memories/{id} | 获取单条 |
+| PUT | /api/memories/{id} | 更新记忆 |
+| DELETE | /api/memories/{id} | 删除记忆 |
+| GET | /api/instances/info | 获取实例信息 |
+| GET | /api/agents | 列出所有 Agent |
 
 ## ⚓ Hook 自动化
 
@@ -141,6 +132,62 @@ O-Mind 通过 Hook 实现自动化记忆管理：
 }
 ```
 
+## 🌐 多实例配置
+
+### 1. 配置 API Keys
+
+在 docker-compose.yml 中设置环境变量：
+
+```yaml
+environment:
+  - MEMORY_API_KEYS={"key-prod-1":{"instance_id":"prod-1","name":"生产环境"},"key-test-1":{"instance_id":"test-1","name":"测试环境"}}
+```
+
+### 2. OpenClaw 实例配置
+
+每个 OpenClaw 实例配置不同的 API Key：
+
+```json
+{
+  "env": {
+    "MEMORY_SERVER_URL": "http://o-mind-api:8000",
+    "MEMORY_API_KEY": "key-prod-1"
+  }
+}
+```
+
+## 🎨 管理界面
+
+### 访问地址
+
+http://localhost:3000
+
+### 功能
+
+| 功能 | 说明 |
+|------|------|
+| 📊 记忆统计 | 总数量、本实例数量、Agent 数量 |
+| 🔍 记忆搜索 | 关键词搜索 |
+| ➕ 新建记忆 | 创建新记忆 |
+| ✏️ 编辑记忆 | 修改内容和标签 |
+| 🗑️ 删除记忆 | 删除记忆 |
+| 👥 Agent 管理 | 查看各 Agent 的记忆统计 |
+| 🔑 实例切换 | 通过 API Key 切换不同实例 |
+
+### 界面预览
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  O-Mind 管理面板                    [key-prod-1 ▼]          │
+├──────────┬──────────────────────────────────────────────────┤
+│ 记忆管理  │  记忆总数: 5    本实例记忆: 5    Agent: 2       │
+│ Agent管理 │ ───────────────────────────────────────────────  │
+│   设置    │  内容                    标签    Agent   操作    │
+│          │  用户喜欢蓝色           蓝色    agent-1  编辑删除 │
+│          │  用户喜欢绿色           绿色    agent-2  编辑删除 │
+└──────────┴──────────────────────────────────────────────────┘
+```
+
 ## 🐳 部署
 
 ### 开发环境
@@ -161,6 +208,7 @@ docker-compose -f docker-compose.prod.yml up -d
 | 服务 | 端口 | 说明 |
 |------|------|------|
 | O-Mind API | 8000 | REST API |
+| Admin UI | 3000 | 管理界面 |
 | MySQL | 3306 | 数据库 |
 | Qdrant | 6333 | 向量数据库 |
 
@@ -169,15 +217,13 @@ docker-compose -f docker-compose.prod.yml up -d
 ```
 O-Mind/
 ├── api/                      # FastAPI 服务
-│   ├── __init__.py
 │   └── main.py              # 主服务代码
-├── skill-memory-server/       # OpenClaw Skill
-│   ├── SKILL.md
-│   └── index.ts
+├── admin-ui/                 # React 管理界面
+│   ├── src/
+│   │   └── App.jsx         # 主组件
+│   └── nginx.conf          # Nginx 配置
+├── skill-memory-server/      # OpenClaw Skill
 ├── hooks/                    # Hook 自动化
-│   └── memory-server-hook/
-│       ├── HOOK.md
-│       └── handler.js
 ├── docker-compose.yml        # Docker Compose 配置
 ├── Dockerfile               # API 服务镜像
 ├── requirements.txt         # Python 依赖
@@ -215,6 +261,16 @@ docker logs o-mind-api
 
 # 验证数据库连接
 curl http://localhost:8000/health
+```
+
+### 管理界面空白
+
+```bash
+# 检查 Nginx 日志
+docker logs o-mind-admin
+
+# 确认 API 代理配置
+docker exec o-mind-admin cat /etc/nginx/conf.d/default.conf
 ```
 
 ## 📄 License
