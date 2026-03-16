@@ -348,6 +348,110 @@ async def list_agents(
     return [a[0] for a in agents if a[0]]
 
 
+@app.post("/api/memories/batch-delete")
+async def batch_delete_memories(
+    ids: List[str],
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """批量删除记忆"""
+    deleted_count = 0
+    for memory_id in ids:
+        db_memory = db.query(MemoryModel).filter(
+            and_(
+                MemoryModel.id == memory_id,
+                MemoryModel.instance_id == instance_info["instance_id"]
+            )
+        ).first()
+        if db_memory:
+            db.delete(db_memory)
+            deleted_count += 1
+    
+    db.commit()
+    return {"status": "deleted", "count": deleted_count}
+
+
+@app.get("/api/memories/export")
+async def export_memories(
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """导出所有记忆为 JSON"""
+    memories = db.query(MemoryModel).filter(
+        MemoryModel.instance_id == instance_info["instance_id"]
+    ).all()
+    
+    return [{
+        "id": m.id,
+        "content": m.content,
+        "tags": m.tags,
+        "source": m.source,
+        "agent_id": m.agent_id,
+        "meta": m.meta,
+        "created_at": m.created_at.isoformat() if m.created_at else None,
+        "updated_at": m.updated_at.isoformat() if m.updated_at else None
+    } for m in memories]
+
+
+@app.post("/api/memories/import")
+async def import_memories(
+    memories: List[dict],
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """批量导入记忆"""
+    imported_count = 0
+    for mem_data in memories:
+        memory_id = mem_data.get("id", str(uuid4()))
+        db_memory = MemoryModel(
+            id=memory_id,
+            content=mem_data.get("content", ""),
+            tags=mem_data.get("tags", []),
+            source=mem_data.get("source", "import"),
+            agent_id=mem_data.get("agent_id"),
+            meta=mem_data.get("meta", {}),
+            instance_id=instance_info["instance_id"],
+        )
+        db.add(db_memory)
+        imported_count += 1
+    
+    db.commit()
+    return {"status": "imported", "count": imported_count}
+
+
+@app.get("/api/stats")
+async def get_stats(
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """获取统计信息"""
+    total = db.query(MemoryModel).filter(
+        MemoryModel.instance_id == instance_info["instance_id"]
+    ).count()
+    
+    agents = db.query(MemoryModel.agent_id).filter(
+        MemoryModel.instance_id == instance_info["instance_id"]
+    ).distinct().all()
+    
+    # 按标签统计
+    all_memories = db.query(MemoryModel).filter(
+        MemoryModel.instance_id == instance_info["instance_id"]
+    ).all()
+    
+    tag_counts = {}
+    for m in all_memories:
+        if m.tags:
+            for tag in m.tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    
+    return {
+        "total_memories": total,
+        "total_agents": len([a[0] for a in agents if a[0]]),
+        "tag_counts": tag_counts,
+        "instance_id": instance_info["instance_id"]
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

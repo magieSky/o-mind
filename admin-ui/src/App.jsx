@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react'
-import { Layout, Menu, theme, Statistic, Card, Row, Col, Table, Tag, Button, Input, Modal, Form, message, Select, Badge, Space } from 'antd'
-import { InboxOutlined, AppstoreOutlined, TeamOutlined, SettingOutlined, PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ApiOutlined } from '@ant-design/icons'
+import { Layout, Menu, theme, Statistic, Card, Row, Col, Table, Tag, Button, Input, Modal, Form, message, Select, Badge, Space, Switch, Checkbox, Popconfirm, Typography, Timeline } from 'antd'
+import { InboxOutlined, AppstoreOutlined, TeamOutlined, SettingOutlined, PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ApiOutlined, ExportOutlined, ImportOutlined, BarChartOutlined, SunOutlined, MoonOutlined, DeleteFilled } from '@ant-design/icons'
 import axios from 'axios'
 
 const { Header, Content, Sider } = Layout
 const { Search } = Input
+const { Title } = Typography
 
 // API 配置 - 使用相对路径，通过 nginx 代理
 const API_BASE = ''
@@ -24,11 +25,17 @@ api.interceptors.request.use(config => {
   return config
 })
 
-function App() {
+function App({ darkMode: propDarkMode, setDarkMode: propSetDarkMode }) {
   const [collapsed, setCollapsed] = useState(false)
   const [currentView, setCurrentView] = useState('memories')
   const [apiKey, setApiKey] = useState(localStorage.getItem('apiKey') || '')
   const [instanceInfo, setInstanceInfo] = useState(null)
+  const [darkModeLocal, setDarkModeLocal] = useState(localStorage.getItem('darkMode') === 'true')
+  
+  // 使用 props 或者本地状态
+  const darkMode = propDarkMode !== undefined ? propDarkMode : darkModeLocal
+  const setDarkMode = propSetDarkMode || setDarkModeLocal
+
   const {
     token: { colorBgContainer, borderRadiusLG }
   } = theme.useToken()
@@ -38,6 +45,10 @@ function App() {
       fetchInstanceInfo()
     }
   }, [apiKey])
+
+  useEffect(() => {
+    document.body.style.backgroundColor = darkMode ? '#141414' : '#f0f2f5'
+  }, [darkMode])
 
   const fetchInstanceInfo = async () => {
     try {
@@ -56,11 +67,21 @@ function App() {
     }
   }
 
+  const toggleDarkMode = (checked) => {
+    setDarkMode(checked)
+    localStorage.setItem('darkMode', checked)
+  }
+
   const menuItems = [
     {
       key: 'memories',
       icon: <InboxOutlined />,
       label: '记忆管理'
+    },
+    {
+      key: 'stats',
+      icon: <BarChartOutlined />,
+      label: '数据统计'
     },
     {
       key: 'agents',
@@ -75,8 +96,8 @@ function App() {
   ]
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ display: 'flex', alignItems: 'center', padding: '0 24px', background: '#001529', justifyContent: 'space-between' }}>
+    <Layout style={{ minHeight: '100vh', background: darkMode ? '#141414' : '#f0f2f5' }}>
+      <Header style={{ display: 'flex', alignItems: 'center', padding: '0 24px', background: darkMode ? '#1f1f1f' : '#001529', justifyContent: 'space-between' }}>
         <div style={{ color: '#fff', fontSize: '20px', fontWeight: 'bold' }}>
           <ApiOutlined style={{ marginRight: 8 }} />
           O-Mind 管理面板
@@ -85,6 +106,12 @@ function App() {
           {instanceInfo && (
             <Badge status="success" text={<span style={{ color: '#fff' }}>{instanceInfo.name} ({instanceInfo.instance_id})</span>} />
           )}
+          <Switch
+            checked={darkMode}
+            onChange={toggleDarkMode}
+            checkedChildren={<MoonOutlined />}
+            unCheckedChildren={<SunOutlined />}
+          />
           <Select
             value={apiKey}
             onChange={handleApiKeyChange}
@@ -115,9 +142,10 @@ function App() {
               minHeight: 280
             }}
           >
-            {currentView === 'memories' && <MemoriesView api={api} />}
-            {currentView === 'agents' && <AgentsView api={api} />}
-            {currentView === 'settings' && <SettingsView />}
+            {currentView === 'memories' && <MemoriesView api={api} darkMode={darkMode} />}
+            {currentView === 'stats' && <StatsView api={api} darkMode={darkMode} />}
+            {currentView === 'agents' && <AgentsView api={api} darkMode={darkMode} />}
+            {currentView === 'settings' && <SettingsView darkMode={darkMode} />}
           </Content>
         </Layout>
       </Layout>
@@ -126,12 +154,13 @@ function App() {
 }
 
 // 记忆管理组件
-function MemoriesView({ api }) {
+function MemoriesView({ api, darkMode }) {
   const [memories, setMemories] = useState([])
   const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
   const [modalVisible, setModalVisible] = useState(false)
   const [editingMemory, setEditingMemory] = useState(null)
+  const [selectedRowKeys, setSelectedRowKeys] = useState([])
   const [form] = Form.useForm()
 
   const fetchMemories = async () => {
@@ -182,6 +211,54 @@ function MemoriesView({ api }) {
     }
   }
 
+  const handleBatchDelete = async () => {
+    try {
+      await api.post('/api/memories/batch-delete', selectedRowKeys)
+      message.success(`成功删除 ${selectedRowKeys.length} 条记忆`)
+      setSelectedRowKeys([])
+      fetchMemories()
+    } catch (err) {
+      message.error('批量删除失败')
+    }
+  }
+
+  const handleExport = async () => {
+    try {
+      const res = await api.get('/api/memories/export')
+      const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `o-mind-memories-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      message.success('导出成功')
+    } catch (err) {
+      message.error('导出失败')
+    }
+  }
+
+  const handleImport = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = async (e) => {
+      const file = e.target.files[0]
+      if (!file) return
+      
+      try {
+        const text = await file.text()
+        const data = JSON.parse(text)
+        await api.post('/api/memories/import', data)
+        message.success('导入成功')
+        fetchMemories()
+      } catch (err) {
+        message.error('导入失败，请检查文件格式')
+      }
+    }
+    input.click()
+  }
+
   const handleSubmit = async (values) => {
     try {
       if (editingMemory) {
@@ -203,7 +280,7 @@ function MemoriesView({ api }) {
       title: '内容',
       dataIndex: 'content',
       key: 'content',
-      width: '40%',
+      width: '35%',
       ellipsis: true
     },
     {
@@ -234,7 +311,7 @@ function MemoriesView({ api }) {
     {
       title: '操作',
       key: 'action',
-      width: '20%',
+      width: '15%',
       render: (_, record) => (
         <Space>
           <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
@@ -243,6 +320,11 @@ function MemoriesView({ api }) {
       )
     }
   ]
+
+  const rowSelection = {
+    selectedRowKeys,
+    onChange: setSelectedRowKeys
+  }
 
   return (
     <div style={{ padding: 24 }}>
@@ -273,19 +355,36 @@ function MemoriesView({ api }) {
       </Row>
 
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <Search
-          placeholder="搜索记忆内容"
-          allowClear
-          enterButton={<SearchOutlined />}
-          style={{ width: 300 }}
-          onSearch={handleSearch}
-        />
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-          新建记忆
-        </Button>
+        <Space>
+          <Search
+            placeholder="搜索记忆内容"
+            allowClear
+            enterButton={<SearchOutlined />}
+            style={{ width: 300 }}
+            onSearch={handleSearch}
+          />
+        </Space>
+        <Space>
+          {selectedRowKeys.length > 0 && (
+            <Popconfirm
+              title={`确定删除这 ${selectedRowKeys.length} 条记忆吗？`}
+              onConfirm={handleBatchDelete}
+            >
+              <Button danger icon={<DeleteFilled />}>
+                批量删除 ({selectedRowKeys.length})
+              </Button>
+            </Popconfirm>
+          )}
+          <Button icon={<ExportOutlined />} onClick={handleExport}>导出</Button>
+          <Button icon={<ImportOutlined />} onClick={handleImport}>导入</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+            新建记忆
+          </Button>
+        </Space>
       </div>
 
       <Table
+        rowSelection={rowSelection}
         columns={columns}
         dataSource={memories}
         rowKey="id"
@@ -315,8 +414,87 @@ function MemoriesView({ api }) {
   )
 }
 
+// 统计组件
+function StatsView({ api, darkMode }) {
+  const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  const fetchStats = async () => {
+    setLoading(true)
+    try {
+      const res = await api.get('/api/stats')
+      setStats(res.data)
+    } catch (err) {
+      message.error('获取统计失败')
+    }
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchStats()
+  }, [])
+
+  const tagData = stats ? Object.entries(stats.tag_counts || {}).map(([name, value]) => ({ name, value })) : []
+
+  return (
+    <div style={{ padding: 24 }}>
+      <Title level={3}>数据统计</Title>
+      <Row gutter={16} style={{ marginBottom: 24 }}>
+        <Col span={8}>
+          <Card>
+            <Statistic title="记忆总数" value={stats?.total_memories || 0} prefix={<InboxOutlined />} valueStyle={{ color: '#1890ff' }} />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card>
+            <Statistic title="Agent 数量" value={stats?.total_agents || 0} prefix={<TeamOutlined />} valueStyle={{ color: '#52c41a' }} />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card>
+            <Statistic title="标签种类" value={tagData.length} prefix={<AppstoreOutlined />} valueStyle={{ color: '#722ed1' }} />
+          </Card>
+        </Col>
+      </Row>
+
+      <Card title="标签分布" style={{ marginBottom: 24 }}>
+        {tagData.length > 0 ? (
+          <div style={{ maxHeight: 400, overflow: 'auto' }}>
+            {tagData.sort((a, b) => b.value - a.value).map((tag, index) => (
+              <div key={tag.name} style={{ marginBottom: 8, display: 'flex', alignItems: 'center' }}>
+                <Tag color="blue" style={{ minWidth: 80 }}>{tag.name}</Tag>
+                <div style={{ flex: 1, marginLeft: 16 }}>
+                  <div style={{ 
+                    width: `${(tag.value / tagData[0].value) * 100}%`, 
+                    height: 20, 
+                    background: darkMode ? '#1890ff' : '#1890ff',
+                    borderRadius: 4,
+                    minWidth: 20
+                  }} />
+                </div>
+                <span style={{ marginLeft: 16, minWidth: 30 }}>{tag.value}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center', color: '#999' }}>暂无数据</div>
+        )}
+      </Card>
+
+      <Card title="最近活动">
+        <Timeline
+          items={[
+            { children: '系统运行中', color: 'green' },
+            { children: '等待新记忆...', color: 'gray' }
+          ]}
+        />
+      </Card>
+    </div>
+  )
+}
+
 // Agent 管理组件
-function AgentsView({ api }) {
+function AgentsView({ api, darkMode }) {
   const [agents, setAgents] = useState([])
   const [loading, setLoading] = useState(false)
 
@@ -327,8 +505,12 @@ function AgentsView({ api }) {
       // 获取每个Agent的记忆数量
       const agentData = await Promise.all(
         res.data.map(async (agentId) => {
-          const memRes = await api.get('/api/memories', { params: { agent_id: agentId, limit: 1000 } })
-          return { agentId, count: memRes.data.length }
+          try {
+            const memRes = await api.get('/api/memories', { params: { agent_id: agentId, limit: 1000 } })
+            return { agentId, count: memRes.data.length }
+          } catch {
+            return { agentId, count: 0 }
+          }
         })
       )
       setAgents(agentData)
@@ -358,7 +540,7 @@ function AgentsView({ api }) {
 
   return (
     <div style={{ padding: 24 }}>
-      <h2>Agent 管理</h2>
+      <Title level={3}>Agent 管理</Title>
       <Table
         columns={columns}
         dataSource={agents}
@@ -371,18 +553,20 @@ function AgentsView({ api }) {
 }
 
 // 设置组件
-function SettingsView() {
+function SettingsView({ darkMode }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('apiKey') || '')
+  const [saved, setSaved] = useState(false)
 
   const handleSave = () => {
     localStorage.setItem('apiKey', apiKey)
-    message.success('设置已保存')
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
   }
 
   return (
     <div style={{ padding: 24 }}>
-      <h2>设置</h2>
-      <Card title="API 配置" style={{ maxWidth: 500 }}>
+      <Title level={3}>设置</Title>
+      <Card title="基本设置" style={{ maxWidth: 500 }}>
         <Form layout="vertical">
           <Form.Item label="API Key">
             <Input 
@@ -392,7 +576,9 @@ function SettingsView() {
             />
           </Form.Item>
           <Form.Item>
-            <Button type="primary" onClick={handleSave}>保存</Button>
+            <Button type="primary" onClick={handleSave}>
+              {saved ? '已保存 ✓' : '保存'}
+            </Button>
           </Form.Item>
         </Form>
       </Card>
