@@ -1,0 +1,17 @@
+{
+  "id": "o-mind",
+  "name": "O-Mind",
+  "version": "1.0.0",
+  "description": "私有化部署的本地记忆服务 - 替代 mem9 的自建方案",
+  "author": "O-Mind Team",
+  "homepage": "https://gitlab.bjhzsk.cn/develop/o-mind",
+  "platform": "openclaw",
+  "dependencies": [],
+  "keywords": ["memory", "persistent", "local", "o-mind"],
+  "tools": [
+    "save_memory",
+    "get_memories", 
+    "search_memories",
+    "get_stats"
+  ]
+}
