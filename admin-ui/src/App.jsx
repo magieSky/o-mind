@@ -59,7 +59,7 @@ function App() {
   const menuItems = [
     {
       key: 'memories',
-      icon: <MemoryOutlined />,
+      icon: <InboxOutlined />,
       label: '记忆管理'
     },
     {
@@ -203,12 +203,14 @@ function MemoriesView({ api }) {
       title: '内容',
       dataIndex: 'content',
       key: 'content',
+      width: '40%',
       ellipsis: true
     },
     {
       title: '标签',
       dataIndex: 'tags',
       key: 'tags',
+      width: '15%',
       render: (tags) => (
         <>
           {tags?.map(tag => <Tag key={tag} color="blue">{tag}</Tag>)}
@@ -219,17 +221,20 @@ function MemoriesView({ api }) {
       title: 'Agent',
       dataIndex: 'agent_id',
       key: 'agent_id',
+      width: '10%',
       render: (agent) => agent ? <Tag>{agent}</Tag> : '-'
     },
     {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
+      width: '15%',
       render: (date) => new Date(date).toLocaleString('zh-CN')
     },
     {
       title: '操作',
       key: 'action',
+      width: '20%',
       render: (_, record) => (
         <Space>
           <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
@@ -244,7 +249,7 @@ function MemoriesView({ api }) {
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={8}>
           <Card>
-            <Statistic title="记忆总数" value={memories.length} prefix={<MemoryOutlined />} />
+            <Statistic title="记忆总数" value={memories.length} prefix={<InboxOutlined />} />
           </Card>
         </Col>
         <Col span={8}>
