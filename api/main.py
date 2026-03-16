@@ -4,18 +4,63 @@ from typing import Optional, List
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, Column, String, DateTime, Text, JSON
+from sqlalchemy import create_engine, Column, String, DateTime, Text, JSON, and_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import pymysql
 
 load_dotenv()
 
-app = FastAPI(title="Memory Server", version="1.0.0")
+app = FastAPI(
+    title="O-Mind API", 
+    version="2.0.0",
+    description="OpenClaw 本地记忆服务 - 支持多实例认证和多Agent隔离"
+)
 
-# Database models
+# ============ 多实例认证支持 ============
+
+# API Key 存储 (生产环境应该用数据库)
+API_KEYS = {
+    # example: "key-prod-1": {"instance_id": "prod-1", "name": "生产环境1"},
+    # example: "key-test-1": {"instance_id": "test-1", "name": "测试环境1"},
+}
+
+# 从环境变量加载 API Keys
+def load_api_keys():
+    """从环境变量加载 API Keys"""
+    keys_json = os.getenv("MEMORY_API_KEYS", "[]")
+    import json
+    try:
+        keys = json.loads(keys_json)
+        for key, info in keys.items():
+            API_KEYS[key] = info
+    except:
+        pass
+
+load_api_keys()
+
+
+def verify_api_key(x_api_key: Optional[str] = Header(None)):
+    """验证 API Key 并返回实例信息"""
+    if not x_api_key:
+        # 如果没有 API Key，使用默认实例（兼容旧版本）
+        return {"instance_id": "default", "name": "default"}
+    
+    if x_api_key not in API_KEYS:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+    
+    return API_KEYS[x_api_key]
+
+
+def get_current_instance():
+    """获取当前实例的认证信息"""
+    return Depends(verify_api_key)
+
+
+# ============ 数据库模型 ============
+
 Base = declarative_base()
 
 
@@ -26,23 +71,28 @@ class MemoryModel(Base):
     content = Column(Text, nullable=False)
     tags = Column(JSON, default=list)
     source = Column(String(255), nullable=True)
+    instance_id = Column(String(64), nullable=False, default="default")  # 实例ID
+    agent_id = Column(String(64), nullable=True)  # Agent ID
     meta = Column(JSON, default=dict)
     vector_id = Column(String(36), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-# Pydantic models
+# ============ Pydantic 模型 ============
+
 class MemoryCreate(BaseModel):
     content: str
     tags: List[str] = Field(default_factory=list)
     source: Optional[str] = None
+    agent_id: Optional[str] = None  # 可选的 Agent ID
     meta: dict = Field(default_factory=dict)
 
 
 class MemoryUpdate(BaseModel):
     content: Optional[str] = None
     tags: Optional[List[str]] = None
+    agent_id: Optional[str] = None
     meta: Optional[dict] = None
 
 
@@ -51,6 +101,8 @@ class MemoryResponse(BaseModel):
     content: str
     tags: List[str]
     source: Optional[str]
+    instance_id: str
+    agent_id: Optional[str]
     meta: dict
     created_at: datetime
     updated_at: datetime
@@ -59,38 +111,8 @@ class MemoryResponse(BaseModel):
         from_attributes = True
 
 
-# Qdrant client
-def get_qdrant_client():
-    try:
-        from qdrant_client import QdrantClient
-        qdrant_host = os.getenv("QDRANT_HOST", "memory-qdrant")
-        qdrant_port = int(os.getenv("QDRANT_PORT", "6333"))
-        return QdrantClient(host=qdrant_host, port=qdrant_port)
-    except Exception as e:
-        print(f"Qdrant connection error: {e}")
-        return None
+# ============ 数据库连接 ============
 
-
-# Ensure Qdrant collection exists
-def init_qdrant():
-    client = get_qdrant_client()
-    if client:
-        try:
-            from qdrant_client.models import Distance, VectorParams
-            client.recreate_collection(
-                collection_name="memories",
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE)
-            )
-            print("Qdrant collection 'memories' ready")
-        except Exception as e:
-            print(f"Qdrant init error: {e}")
-
-
-# Initialize Qdrant on startup
-init_qdrant()
-
-
-# Database setup
 def get_db():
     mysql_host = os.getenv("MYSQL_HOST", "memory-mysql")
     mysql_port = int(os.getenv("MYSQL_PORT", "3306"))
@@ -98,6 +120,7 @@ def get_db():
     mysql_password = os.getenv("MYSQL_PASSWORD", "123456")
     mysql_database = os.getenv("MYSQL_DATABASE", "memory")
 
+    # 创建数据库
     conn = pymysql.connect(
         host=mysql_host,
         port=mysql_port,
@@ -123,53 +146,46 @@ def get_db():
         session.close()
 
 
+# ============ 路由 ============
+
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "memory-server"}
+    return {"status": "ok", "service": "O-Mind", "version": "2.0.0"}
+
+
+@app.get("/api/keys/verify")
+async def verify_key(x_api_key: Optional[str] = Header(None)):
+    """验证 API Key"""
+    if not x_api_key:
+        return {"valid": False, "message": "No API Key provided"}
+    
+    if x_api_key in API_KEYS:
+        return {"valid": True, "instance": API_KEYS[x_api_key]}
+    
+    return {"valid": False, "message": "Invalid API Key"}
 
 
 @app.post("/api/memories", response_model=MemoryResponse)
-async def create_memory(memory: MemoryCreate, db=Depends(get_db)):
-    """创建新记忆"""
+async def create_memory(
+    memory: MemoryCreate, 
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """创建新记忆（自动关联实例和Agent）"""
     memory_id = str(uuid4())
+    
     db_memory = MemoryModel(
         id=memory_id,
         content=memory.content,
         tags=memory.tags,
         source=memory.source,
+        agent_id=memory.agent_id,
         meta=memory.meta,
+        instance_id=instance_info["instance_id"],  # 自动添加实例ID
     )
     db.add(db_memory)
     db.commit()
     db.refresh(db_memory)
-    
-    # Store vector in Qdrant
-    client = get_qdrant_client()
-    if client:
-        try:
-            from qdrant_client.models import PointStruct
-            # Simple hash-based vector (for demo, in production use proper embedding)
-            import hashlib
-            vector = [float(b) / 255.0 for b in hashlib.md5(memory.content.encode()).digest()[:48]]
-            vector.extend([0.0] * (384 - len(vector)))
-            
-            client.upsert(
-                collection_name="memories",
-                points=[
-                    PointStruct(
-                        id=memory_id,
-                        vector=vector,
-                        payload={
-                            "content": memory.content,
-                            "tags": memory.tags,
-                            "source": memory.source
-                        }
-                    )
-                ]
-            )
-        except Exception as e:
-            print(f"Qdrant upsert error: {e}")
-    
     return db_memory
 
 
@@ -178,15 +194,22 @@ async def search_memories(
     q: Optional[str] = None,
     tags: Optional[str] = None,
     source: Optional[str] = None,
+    agent_id: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,
-    db=Depends(get_db)
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
 ):
-    """搜索记忆"""
-    query = db.query(MemoryModel)
+    """搜索记忆（自动过滤当前实例）"""
+    query = db.query(MemoryModel).filter(
+        MemoryModel.instance_id == instance_info["instance_id"]  # 只查询当前实例的记忆
+    )
 
     if source:
         query = query.filter(MemoryModel.source == source)
+
+    if agent_id:
+        query = query.filter(MemoryModel.agent_id == agent_id)
 
     if tags:
         tag_list = tags.split(",")
@@ -204,45 +227,61 @@ async def search_memories(
 async def vector_search(
     query_text: str,
     limit: int = 10,
-    db=Depends(get_db)
+    agent_id: Optional[str] = None,
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
 ):
-    """向量搜索记忆"""
-    client = get_qdrant_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Vector search unavailable")
+    """向量搜索记忆（自动过滤当前实例）"""
+    # 简化实现：使用关键词匹配
+    query = db.query(MemoryModel).filter(
+        MemoryModel.instance_id == instance_info["instance_id"]
+    )
     
-    try:
-        import hashlib
-        vector = [float(b) / 255.0 for b in hashlib.md5(query_text.encode()).digest()[:48]]
-        vector.extend([0.0] * (384 - len(vector)))
-        
-        results = client.search(
-            collection_name="memories",
-            query_vector=vector,
-            limit=limit
-        )
-        
-        # Get memories by IDs
-        memory_ids = [r.id for r in results]
-        memories = db.query(MemoryModel).filter(MemoryModel.id.in_(memory_ids)).all()
-        return memories
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
+    if agent_id:
+        query = query.filter(MemoryModel.agent_id == agent_id)
+    
+    # 简单关键词匹配（生产环境应使用 Qdrant 向量搜索）
+    memories = query.filter(
+        MemoryModel.content.contains(query_text)
+    ).limit(limit).all()
+    
+    return memories
 
 
 @app.get("/api/memories/{memory_id}", response_model=MemoryResponse)
-async def get_memory(memory_id: str, db=Depends(get_db)):
-    """获取单条记忆"""
-    memory = db.query(MemoryModel).filter(MemoryModel.id == memory_id).first()
+async def get_memory(
+    memory_id: str, 
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """获取单条记忆（验证所有权）"""
+    memory = db.query(MemoryModel).filter(
+        and_(
+            MemoryModel.id == memory_id,
+            MemoryModel.instance_id == instance_info["instance_id"]
+        )
+    ).first()
+    
     if not memory:
         raise HTTPException(status_code=404, detail="Memory not found")
     return memory
 
 
 @app.put("/api/memories/{memory_id}", response_model=MemoryResponse)
-async def update_memory(memory_id: str, memory: MemoryUpdate, db=Depends(get_db)):
-    """更新记忆"""
-    db_memory = db.query(MemoryModel).filter(MemoryModel.id == memory_id).first()
+async def update_memory(
+    memory_id: str, 
+    memory: MemoryUpdate, 
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """更新记忆（验证所有权）"""
+    db_memory = db.query(MemoryModel).filter(
+        and_(
+            MemoryModel.id == memory_id,
+            MemoryModel.instance_id == instance_info["instance_id"]
+        )
+    ).first()
+    
     if not db_memory:
         raise HTTPException(status_code=404, detail="Memory not found")
 
@@ -250,6 +289,8 @@ async def update_memory(memory_id: str, memory: MemoryUpdate, db=Depends(get_db)
         db_memory.content = memory.content
     if memory.tags is not None:
         db_memory.tags = memory.tags
+    if memory.agent_id is not None:
+        db_memory.agent_id = memory.agent_id
     if memory.meta is not None:
         db_memory.meta = memory.meta
 
@@ -260,27 +301,44 @@ async def update_memory(memory_id: str, memory: MemoryUpdate, db=Depends(get_db)
 
 
 @app.delete("/api/memories/{memory_id}")
-async def delete_memory(memory_id: str, db=Depends(get_db)):
-    """删除记忆"""
-    db_memory = db.query(MemoryModel).filter(MemoryModel.id == memory_id).first()
+async def delete_memory(
+    memory_id: str, 
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """删除记忆（验证所有权）"""
+    db_memory = db.query(MemoryModel).filter(
+        and_(
+            MemoryModel.id == memory_id,
+            MemoryModel.instance_id == instance_info["instance_id"]
+        )
+    ).first()
+    
     if not db_memory:
         raise HTTPException(status_code=404, detail="Memory not found")
 
     db.delete(db_memory)
     db.commit()
-    
-    # Delete from Qdrant
-    client = get_qdrant_client()
-    if client:
-        try:
-            client.delete(
-                collection_name="memories",
-                points_selector=[memory_id]
-            )
-        except:
-            pass
-    
     return {"status": "deleted", "id": memory_id}
+
+
+@app.get("/api/instances/info")
+async def get_instance_info(instance_info: dict = Depends(verify_api_key)):
+    """获取当前实例信息"""
+    return instance_info
+
+
+@app.get("/api/agents")
+async def list_agents(
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """列出当前实例的所有Agent"""
+    agents = db.query(MemoryModel.agent_id).filter(
+        MemoryModel.instance_id == instance_info["instance_id"]
+    ).distinct().all()
+    
+    return [a[0] for a in agents if a[0]]
 
 
 if __name__ == "__main__":
