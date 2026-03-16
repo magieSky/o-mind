@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  openclaw-memory-test:
+    image: openclaw:3.8
+    container_name: openclaw-memory-test
+    ports:
+      - "18790:18789"
+    environment:
+      - ANTHROPIC_API_KEY=sk-cp-Nayg5O2Mj9qZERHjY4F7SJdxGy9sOgllv7GXtIxYc2vzcvqFpZ2CJt8zOmJ8AeP9JpexJnhf1DPUWvFV0fjNd92f-rjDThQUGXlIxIBtQxPBvYALIkrfFAM
+      - OPENCLAW_GATEWAY_PORT=18789
+      - MEMORY_SERVER_URL=http://memory-server-memory-server-1:8000
+    volumes:
+      - ./openclaw.json:/root/.openclaw/openclaw.json
+      - ./skills:/workspace/skills
+    networks:
+      - memory-server_memory-network
+    restart: unless-stopped
+    extra_hosts:
+      - "memory-server-memory-server-1:host-gateway"
+
+networks:
+  memory-server_memory-network:
+    external: true
