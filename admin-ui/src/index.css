@@ -8,6 +8,10 @@ body {
   background-color: #f0f2f5;
 }
 
+[data-theme='dark'] body {
+  background-color: #141414;
+}
+
 #root {
   min-height: 100vh;
 }
@@ -23,4 +27,26 @@ body {
   color: #fff;
   font-weight: bold;
   font-size: 16px;
+}
+
+/* 表格深色模式样式 */
+[data-theme='dark'] .ant-table {
+  background: #1f1f1f;
+}
+
+[data-theme='dark'] .ant-table-thead > tr > th {
+  background: #262626;
+}
+
+[data-theme='dark'] .ant-table-tbody > tr > td {
+  background: #1f1f1f;
+}
+
+[data-theme='dark'] .ant-table-tbody > tr:hover > td {
+  background: #262626;
+}
+
+/* 卡片深色模式 */
+[data-theme='dark'] .ant-card {
+  background: #1f1f1f;
 }
