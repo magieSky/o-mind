@@ -8,6 +8,18 @@
   "platform": "openclaw",
   "dependencies": [],
   "keywords": ["memory", "persistent", "local", "o-mind"],
+  "configSchema": {
+    "memoryServerUrl": {
+      "type": "string",
+      "default": "http://localhost:8000",
+      "description": "O-Mind API 服务器地址"
+    },
+    "apiKey": {
+      "type": "string", 
+      "default": "default",
+      "description": "API Key"
+    }
+  },
   "tools": [
     "save_memory",
     "get_memories", 

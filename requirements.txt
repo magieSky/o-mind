@@ -6,3 +6,4 @@ cryptography>=42.0.0
 sqlalchemy>=2.0.25
 python-dotenv>=1.0.0
 qdrant-client>=1.7.0
+sentence-transformers

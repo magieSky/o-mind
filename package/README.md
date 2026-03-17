@@ -7,12 +7,10 @@
 - 🧠 **长久记忆** - 会话历史自动保存到本地数据库
 - 🔒 **私有化部署** - 所有数据存储在本地服务器，安全可控
 - ⚡ **自动化钩子** - 无需手动操作，自动完成记忆存取
-- 🔍 **向量搜索** - 支持语义相似度搜索（使用 sentence-transformers）
+- 🔍 **向量搜索** - 支持语义相似度搜索
 - 🐳 **Docker 部署** - 一键部署，支持 Docker Compose
 - 🌐 **管理界面** - 可视化管理记忆和 Agent
 - 🔑 **多实例隔离** - 支持多个 OpenClaw 实例，每个实例独立记忆
-- 📝 **用户+助手消息** - 自动保存用户消息和 AI 回复
-- 🔄 **去重** - 自动检测重复内容，避免重复存储
 
 ## 🏗️ 架构
 
@@ -27,9 +25,8 @@
 │                    O-Mind API Server                         │
 │                  (FastAPI + Uvicorn)                        │
 ├─────────────────┬─────────────────┬───────────────────────┤
-│   MySQL         │   Qdrant        │   sentence-           │
-│  (结构化存储)    │  (向量数据库)    │   transformers       │
-│                 │                 │  (语义向量)            │
+│   MySQL         │   Qdrant        │   Hooks             │
+│  (结构化存储)    │  (向量数据库)    │  (自动化)           │
 └─────────────────┴─────────────────┴───────────────────────┘
                               │
                               ▼
@@ -45,7 +42,6 @@
 
 - Docker
 - Docker Compose
-- 建议 16GB+ 内存（用于 sentence-transformers 模型）
 
 ### 1. 克隆项目
 
@@ -81,7 +77,7 @@ curl http://localhost:8000/api/memories
 ```bash
 curl -X POST http://localhost:8000/api/memories \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: key-prod-1" \
+  -H "X-API-Key: your-api-key" \
   -d '{
     "content": "用户喜欢蓝色",
     "tags": ["preference", "color"],
@@ -92,25 +88,25 @@ curl -X POST http://localhost:8000/api/memories \
 ### 搜索记忆
 
 ```bash
-# 向量语义搜索（推荐）
-curl "http://localhost:8000/api/memories?q=用户偏好" \
-  -H "X-API-Key: key-prod-1"
+# 关键词搜索
+curl "http://localhost:8000/api/memories?q=喜欢" \
+  -H "X-API-Key: your-api-key"
 
 # 按 Agent 筛选
 curl "http://localhost:8000/api/memories?agent_id=agent-1" \
-  -H "X-API-Key: key-prod-1"
+  -H "X-API-Key: your-api-key"
 ```
 
 ### 其他接口
 
 | 方法 | 路径 | 描述 |
 |------|------|------|
-| GET | /api/memories | 搜索记忆（向量搜索+MySQL） |
-| POST | /api/memories | 创建记忆（自动去重） |
+| GET | /api/memories | 搜索记忆 |
 | GET | /api/memories/{id} | 获取单条 |
 | PUT | /api/memories/{id} | 更新记忆 |
 | DELETE | /api/memories/{id} | 删除记忆 |
-| GET | /api/stats | 获取统计信息 |
+| GET | /api/instances/info | 获取实例信息 |
+| GET | /api/agents | 列出所有 Agent |
 
 ## ⚓ Hook 自动化
 
@@ -119,49 +115,22 @@ O-Mind 通过 Hook 实现自动化记忆管理：
 | Hook | 触发时机 | 行为 |
 |------|----------|------|
 | `before_prompt_build` | 每次 LLM 调用前 | 自动检索相关记忆并注入上下文 |
-| `agent_end` | Agent 完成后 | 自动保存用户消息和 AI 回复 |
+| `before_reset` | 执行 /reset 前 | 自动保存会话摘要 |
+| `agent_end` | Agent 完成后 | 自动保存对话内容 |
 
 ### 配置 Hook
 
-在 OpenClaw 配置中添加 plugin：
+在 OpenClaw 配置中添加：
 
 ```json
 {
-  "plugins": {
-    "entries": {
-      "o-mind": {
-        "enabled": true
-      }
+  "hooks": {
+    "memory-server-hook": {
+      "enabled": true
     }
   }
 }
 ```
-
-设置环境变量：
-
-```bash
-MEMORY_SERVER_URL=http://localhost:8000
-MEMORY_API_KEY=key-prod-1
-```
-
-## 🔍 搜索原理（混合模式）
-
-### 1. 向量语义搜索
-
-- 使用 **sentence-transformers** (bge-base-zh) 生成 768 维语义向量
-- 通过 **Qdrant** 向量数据库进行相似度匹配
-- 返回最相似的记忆 ID 列表
-
-### 2. 数据关联
-
-- Qdrant 存储向量 + 元数据（instance_id, agent_id）
-- MySQL 存储完整内容 + 标签 + 来源
-- 搜索时：Qdrant → 返回 ID → MySQL 查询完整数据
-
-### 3. 自动去重
-
-- 每次保存前检查相同内容是否已存在
-- 相同内容返回 `{"status": "duplicate"}` 不重复存储
 
 ## 🌐 多实例配置
 
@@ -187,12 +156,51 @@ environment:
 }
 ```
 
+## 🎨 管理界面
+
+### 访问地址
+
+http://localhost:3000
+
+### 功能
+
+| 功能 | 说明 |
+|------|------|
+| 📊 记忆统计 | 总数量、本实例数量、Agent 数量 |
+| 🔍 记忆搜索 | 关键词搜索 |
+| ➕ 新建记忆 | 创建新记忆 |
+| ✏️ 编辑记忆 | 修改内容和标签 |
+| 🗑️ 删除记忆 | 删除记忆 |
+| 👥 Agent 管理 | 查看各 Agent 的记忆统计 |
+| 🔑 实例切换 | 通过 API Key 切换不同实例 |
+
+### 界面预览
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  O-Mind 管理面板                    [key-prod-1 ▼]          │
+├──────────┬──────────────────────────────────────────────────┤
+│ 记忆管理  │  记忆总数: 5    本实例记忆: 5    Agent: 2       │
+│ Agent管理 │ ───────────────────────────────────────────────  │
+│   设置    │  内容                    标签    Agent   操作    │
+│          │  用户喜欢蓝色           蓝色    agent-1  编辑删除 │
+│          │  用户喜欢绿色           绿色    agent-2  编辑删除 │
+└──────────┴──────────────────────────────────────────────────┘
+```
+
 ## 🐳 部署
 
 ### 开发环境
 
 ```bash
 docker-compose up -d
+```
+
+### 生产环境
+
+```bash
+# 使用外部数据库
+docker-compose -f docker-compose.prod.yml up -d
 ```
 
 ### 端口配置
@@ -204,46 +212,23 @@ docker-compose up -d
 | MySQL | 3306 | 数据库 |
 | Qdrant | 6333 | 向量数据库 |
 
-### 更新服务
-
-```bash
-# 重新构建镜像
-docker build -t o-mind:latest .
-
-# 重启容器
-docker restart o-mind-api
-```
-
 ## 🛠️ 项目结构
 
 ```
 O-Mind/
 ├── api/                      # FastAPI 服务
-│   └── main.py              # 主服务代码（含向量搜索）
+│   └── main.py              # 主服务代码
 ├── admin-ui/                 # React 管理界面
-├── openclaw-plugin/          # OpenClaw Plugin
+│   ├── src/
+│   │   └── App.jsx         # 主组件
+│   └── nginx.conf          # Nginx 配置
+├── skill-memory-server/      # OpenClaw Skill
+├── hooks/                    # Hook 自动化
 ├── docker-compose.yml        # Docker Compose 配置
 ├── Dockerfile               # API 服务镜像
 ├── requirements.txt         # Python 依赖
-│   └── sentence-transformers  # 向量embedding
 └── README.md               # 项目说明
 ```
-
-## 📝 保存的内容
-
-### 有价值的记忆
-
-- ✅ 用户告诉的重要信息
-- ✅ 运维配置和设置
-- ✅ 项目背景和需求
-- ✅ 问题和解决方案
-- ✅ 工作摘要
-
-### 自动过滤
-
-- ❌ 系统元数据（Conversation info、System:）
-- ❌ 调试日志（Traceback、mysql:）
-- ❌ 重复内容
 
 ## 🔧 故障排除
 
@@ -257,6 +242,17 @@ docker-compose logs -f
 docker-compose restart
 ```
 
+### 无法连接数据库
+
+```bash
+# 检查数据库状态
+docker-compose ps
+
+# 重建数据库
+docker-compose down -v
+docker-compose up -d
+```
+
 ### 记忆未保存
 
 ```bash
@@ -267,11 +263,20 @@ docker logs o-mind-api
 curl http://localhost:8000/health
 ```
 
-### 向量搜索无结果
+### 管理界面空白
 
-- 确认 Qdrant 有数据：`docker exec o-mind-api python -c "from api.main import get_qdrant_client; c = get_qdrant_client(); print(len(c.scroll('memories', limit=1000)[0]))"`
-- 检查 MySQL 有数据：`docker exec o-mind-mysql mysql -uroot -p123456 -e "USE memory; SELECT COUNT(*) FROM memories;"`
+```bash
+# 检查 Nginx 日志
+docker logs o-mind-admin
+
+# 确认 API 代理配置
+docker exec o-mind-admin cat /etc/nginx/conf.d/default.conf
+```
 
 ## 📄 License
 
 MIT License
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！

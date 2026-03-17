@@ -1,0 +1,10 @@
+{
+  "name": "o-mind",
+  "version": "1.0.0",
+  "description": "私有化部署的本地记忆服务",
+  "main": "index.js",
+  "openclaw": {
+    "plugin": true,
+    "extensions": ["./index.js"]
+  }
+}
