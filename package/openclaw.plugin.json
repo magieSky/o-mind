@@ -1,0 +1,34 @@
+{
+  "id": "o-mind",
+  "name": "O-Mind",
+  "version": "1.0.0",
+  "description": "私有化部署的本地记忆服务 - 替代 mem9 的自建方案",
+  "author": "O-Mind Team",
+  "homepage": "https://gitlab.bjhzsk.cn/develop/o-mind",
+  "platform": "openclaw",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "memoryServerUrl": {
+        "type": "string",
+        "description": "O-Mind API 服务器地址"
+      },
+      "apiKey": {
+        "type": "string", 
+        "description": "API Key"
+      }
+    }
+  },
+  "uiHints": {
+    "memoryServerUrl": {
+      "label": "服务器地址",
+      "placeholder": "http://localhost:8000"
+    },
+    "apiKey": {
+      "label": "API Key",
+      "placeholder": "your-api-key",
+      "sensitive": true
+    }
+  }
+}

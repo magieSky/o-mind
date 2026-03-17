@@ -1,0 +1,44 @@
+{
+  "name": "o-mind",
+  "version": "1.0.10",
+  "description": "OpenClaw 自建记忆服务插件 - 私有化部署的本地持久化记忆方案",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "O-Mind Team",
+  "repository": {
+    "type": "git",
+    "url": "https://gitlab.bjhzsk.cn/develop/o-mind.git",
+    "directory": "openclaw-plugin"
+  },
+  "homepage": "https://gitlab.bjhzsk.cn/develop/o-mind",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "memory",
+    "agent-memory",
+    "persistent-memory",
+    "local-memory",
+    "o-mind"
+  ],
+  "files": [
+    "*.js",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.1.26"
+  },
+  "dependencies": {},
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}

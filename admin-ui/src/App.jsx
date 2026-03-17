@@ -22,6 +22,8 @@ api.interceptors.request.use(config => {
   if (apiKey) {
     config.headers['X-API-Key'] = apiKey
   }
+  // 添加时间戳防止缓存
+  config.params = { ...config.params, _t: Date.now() }
   return config
 })
 
@@ -31,7 +33,7 @@ function App({ darkMode: propDarkMode, setDarkMode: propSetDarkMode }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('apiKey') || '')
   const [instanceInfo, setInstanceInfo] = useState(null)
   const [darkModeLocal, setDarkModeLocal] = useState(localStorage.getItem('darkMode') === 'true')
-  
+
   // 使用 props 或者本地状态
   const darkMode = propDarkMode !== undefined ? propDarkMode : darkModeLocal
   const setDarkMode = propSetDarkMode || setDarkModeLocal
@@ -43,6 +45,7 @@ function App({ darkMode: propDarkMode, setDarkMode: propSetDarkMode }) {
   useEffect(() => {
     if (apiKey) {
       fetchInstanceInfo()
+      // 注意：memories 和 stats 在各自的组件中通过 useEffect 获取
     }
   }, [apiKey])
 
@@ -64,6 +67,8 @@ function App({ darkMode: propDarkMode, setDarkMode: propSetDarkMode }) {
     localStorage.setItem('apiKey', value)
     if (value) {
       fetchInstanceInfo()
+      // 强制刷新页面
+      window.location.reload()
     }
   }
 
@@ -142,9 +147,9 @@ function App({ darkMode: propDarkMode, setDarkMode: propSetDarkMode }) {
               minHeight: 280
             }}
           >
-            {currentView === 'memories' && <MemoriesView api={api} darkMode={darkMode} />}
-            {currentView === 'stats' && <StatsView api={api} darkMode={darkMode} />}
-            {currentView === 'agents' && <AgentsView api={api} darkMode={darkMode} />}
+            {currentView === 'memories' && <MemoriesView api={api} apiKey={apiKey} darkMode={darkMode} />}
+            {currentView === 'stats' && <StatsView api={api} apiKey={apiKey} darkMode={darkMode} />}
+            {currentView === 'agents' && <AgentsView api={api} apiKey={apiKey} darkMode={darkMode} />}
             {currentView === 'settings' && <SettingsView darkMode={darkMode} />}
           </Content>
         </Layout>
@@ -154,7 +159,7 @@ function App({ darkMode: propDarkMode, setDarkMode: propSetDarkMode }) {
 }
 
 // 记忆管理组件
-function MemoriesView({ api, darkMode }) {
+function MemoriesView({ api, apiKey, darkMode }) {
   const [memories, setMemories] = useState([])
   const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -162,12 +167,21 @@ function MemoriesView({ api, darkMode }) {
   const [editingMemory, setEditingMemory] = useState(null)
   const [selectedRowKeys, setSelectedRowKeys] = useState([])
   const [form] = Form.useForm()
-
-  const fetchMemories = async () => {
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [pagination, setPagination] = useState({ total: 0, current: 1, pageSize: 10 })
+  
+  const fetchMemories = async (page = 1) => {
     setLoading(true)
     try {
-      const res = await api.get('/api/memories', { params: { limit: 100 } })
-      setMemories(res.data)
+      const res = await api.get('/api/memories/list', {
+        params: {
+          page: page,
+          page_size: 10,
+          q: searchKeyword
+        }
+      })
+      setMemories(res.data.items)
+      setPagination({ ...pagination, total: res.data.total, current: res.data.page })
     } catch (err) {
       message.error('获取记忆失败')
     }
@@ -176,17 +190,29 @@ function MemoriesView({ api, darkMode }) {
 
   useEffect(() => {
     fetchMemories()
-  }, [])
+  }, [apiKey])
 
   const handleSearch = async (value) => {
+    setSearchKeyword(value)
     setLoading(true)
     try {
-      const res = await api.get('/api/memories', { params: { q: value, limit: 100 } })
-      setMemories(res.data)
+      const res = await api.get('/api/memories/list', {
+        params: {
+          page: 1,
+          page_size: 100,
+          q: value
+        }
+      })
+      setMemories(res.data.items)
+      setPagination({ ...pagination, total: res.data.total, current: 1 })
     } catch (err) {
       message.error('搜索失败')
     }
     setLoading(false)
+  }
+
+  const handlePageChange = (page) => {
+    fetchMemories(page)
   }
 
   const handleAdd = () => {
@@ -245,7 +271,7 @@ function MemoriesView({ api, darkMode }) {
     input.onchange = async (e) => {
       const file = e.target.files[0]
       if (!file) return
-      
+
       try {
         const text = await file.text()
         const data = JSON.parse(text)
@@ -298,8 +324,9 @@ function MemoriesView({ api, darkMode }) {
       title: 'Agent',
       dataIndex: 'agent_id',
       key: 'agent_id',
-      width: '10%',
-      render: (agent) => agent ? <Tag>{agent}</Tag> : '-'
+      width: '15%',
+      ellipsis: true,
+      render: (agent) => agent ? <Tag>{agent.length > 20 ? agent.slice(0, 20) + '...' : agent}</Tag> : '-'
     },
     {
       title: '创建时间',
@@ -331,24 +358,24 @@ function MemoriesView({ api, darkMode }) {
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={8}>
           <Card>
-            <Statistic title="记忆总数" value={memories.length} prefix={<InboxOutlined />} />
+            <Statistic title="记忆总数" value={pagination.total} prefix={<InboxOutlined />} />
           </Card>
         </Col>
         <Col span={8}>
           <Card>
-            <Statistic 
-              title="本实例记忆" 
-              value={memories.filter(m => m.instance_id).length} 
-              prefix={<AppstoreOutlined />} 
+            <Statistic
+              title="本实例记忆"
+              value={pagination.total}
+              prefix={<AppstoreOutlined />}
             />
           </Card>
         </Col>
         <Col span={8}>
           <Card>
-            <Statistic 
-              title="Agent 数量" 
-              value={new Set(memories.map(m => m.agent_id).filter(Boolean)).size} 
-              prefix={<TeamOutlined />} 
+            <Statistic
+              title="Agent 数量"
+              value={new Set(memories.map(m => m.agent_id).filter(Boolean)).size}
+              prefix={<TeamOutlined />}
             />
           </Card>
         </Col>
@@ -389,7 +416,13 @@ function MemoriesView({ api, darkMode }) {
         dataSource={memories}
         rowKey="id"
         loading={loading}
-        pagination={{ pageSize: 10 }}
+        pagination={{ 
+          pageSize: 10, 
+          total: pagination.total,
+          current: pagination.current,
+          onChange: handlePageChange,
+          showSizeChanger: false
+        }}
       />
 
       <Modal
@@ -415,7 +448,7 @@ function MemoriesView({ api, darkMode }) {
 }
 
 // 统计组件
-function StatsView({ api, darkMode }) {
+function StatsView({ api, apiKey, darkMode }) {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(false)
 
@@ -432,7 +465,7 @@ function StatsView({ api, darkMode }) {
 
   useEffect(() => {
     fetchStats()
-  }, [])
+  }, [apiKey])
 
   const tagData = stats ? Object.entries(stats.tag_counts || {}).map(([name, value]) => ({ name, value })) : []
 
@@ -464,9 +497,9 @@ function StatsView({ api, darkMode }) {
               <div key={tag.name} style={{ marginBottom: 8, display: 'flex', alignItems: 'center' }}>
                 <Tag color="blue" style={{ minWidth: 80 }}>{tag.name}</Tag>
                 <div style={{ flex: 1, marginLeft: 16 }}>
-                  <div style={{ 
-                    width: `${(tag.value / tagData[0].value) * 100}%`, 
-                    height: 20, 
+                  <div style={{
+                    width: `${(tag.value / tagData[0].value) * 100}%`,
+                    height: 20,
                     background: darkMode ? '#1890ff' : '#1890ff',
                     borderRadius: 4,
                     minWidth: 20
@@ -494,7 +527,7 @@ function StatsView({ api, darkMode }) {
 }
 
 // Agent 管理组件
-function AgentsView({ api, darkMode }) {
+function AgentsView({ api, apiKey, darkMode }) {
   const [agents, setAgents] = useState([])
   const [loading, setLoading] = useState(false)
 
@@ -515,14 +548,14 @@ function AgentsView({ api, darkMode }) {
       )
       setAgents(agentData)
     } catch (err) {
-      message.error('获取 Agent 失败')
+      console.error('Failed to fetch agents:', err)
     }
     setLoading(false)
   }
 
   useEffect(() => {
     fetchAgents()
-  }, [])
+  }, [apiKey])
 
   const columns = [
     {
@@ -569,9 +602,9 @@ function SettingsView({ darkMode }) {
       <Card title="基本设置" style={{ maxWidth: 500 }}>
         <Form layout="vertical">
           <Form.Item label="API Key">
-            <Input 
-              value={apiKey} 
-              onChange={(e) => setApiKey(e.target.value)} 
+            <Input
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
               placeholder="输入 API Key"
             />
           </Form.Item>

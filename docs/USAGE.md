@@ -23,12 +23,14 @@ O-Mind 是 OpenClaw 的本地记忆服务，替代 mem9 的私有化部署方案
 ### 核心功能
 
 - ✅ 长久记忆存储
-- ✅ 向量语义搜索
+- ✅ 向量语义搜索（sentence-transformers）
 - ✅ 自动化 Hook
 - ✅ 私有化部署
 - ✅ Docker 一键部署
 - ✅ Web 管理界面
 - ✅ 多实例隔离
+- ✅ 用户+助手消息自动保存
+- ✅ 语义向量去重
 
 ---
 
@@ -96,12 +98,12 @@ curl -X POST http://localhost:8000/api/memories \
 ### 3.2 查询记忆
 
 ```bash
-# 列出所有记忆
+# 列出所有记忆（按时间倒序）
 curl http://localhost:8000/api/memories \
   -H "X-API-Key: your-api-key"
 
-# 关键词搜索
-curl "http://localhost:8000/api/memories?q=喜欢" \
+# 向量语义搜索（推荐）
+curl "http://localhost:8000/api/memories?q=用户偏好" \
   -H "X-API-Key: your-api-key"
 
 # 按 Agent 筛选
@@ -112,6 +114,18 @@ curl "http://localhost:8000/api/memories?agent_id=agent-1" \
 curl "http://localhost:8000/api/memories?tags=preference" \
   -H "X-API-Key: your-api-key"
 ```
+
+### 3.3 搜索原理（混合模式）
+
+1. 使用 **sentence-transformers** (bge-base-zh) 生成查询向量（768维）
+2. **Qdrant** 向量数据库进行相似度匹配
+3. 返回匹配的 ID 列表
+4. **MySQL** 查询完整记录
+
+### 3.4 自动去重
+
+- 每次保存前检查相同内容是否已存在
+- 相同内容返回 `{"status": "duplicate"}`
 
 ### 3.3 更新记忆
 
@@ -224,9 +238,20 @@ curl http://localhost:8000/api/agents \
 
 | Hook | 说明 | 自动化 |
 |------|------|--------|
-| before_prompt_build | 每次对话前 | ✅ |
-| before_reset | 重置会话前 | ✅ |
-| agent_end | 对话结束后 | ✅ |
+| before_prompt_build | 每次对话前检索相关记忆 | ✅ |
+| agent_end | 对话结束后保存用户+助手消息 | ✅ |
+
+### 6.3 保存的消息类型
+
+- **user-message**: 用户说的话
+- **assistant-message**: AI 的回复
+
+### 6.4 自动过滤
+
+以下内容不会被保存：
+- 系统元数据（Conversation info、System:）
+- 调试日志（Traceback、mysql:）
+- 重复内容
 
 ---
 

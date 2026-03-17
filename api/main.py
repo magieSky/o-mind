@@ -9,7 +9,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, Column, String, DateTime, Text, JSON, and_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, Match
 import pymysql
+import numpy as np
 
 load_dotenv()
 
@@ -18,6 +21,153 @@ app = FastAPI(
     version="2.0.0",
     description="OpenClaw 本地记忆服务 - 支持多实例认证和多Agent隔离"
 )
+
+# ============ Qdrant 客户端初始化 ============
+def get_qdrant_client():
+    qdrant_host = os.getenv("QDRANT_HOST", "memory-qdrant")
+    return QdrantClient(host=qdrant_host, port=6333)
+
+# 初始化 Qdrant collection
+def init_qdrant_collection():
+    """初始化 Qdrant collection（如果不存在）"""
+    client = get_qdrant_client()
+    collections = client.get_collections().collections
+    collection_names = [c.name for c in collections]
+    
+    if "memories" not in collection_names:
+        client.create_collection(
+            collection_name="memories",
+            vectors_config=VectorParams(size=768, distance=Distance.COSINE)
+        )
+        print("[O-Mind] Created Qdrant collection 'memories'")
+
+# 简单的文本 embedding（使用 hash 作为占位符，生产环境应使用 sentence-transformers）
+# 初始化 sentence-transformers 模型
+EMBEDDING_MODEL = None
+
+def get_embedding_model():
+    """获取 embedding 模型（延迟加载）"""
+    global EMBEDDING_MODEL
+    if EMBEDDING_MODEL is None:
+        from sentence_transformers import SentenceTransformer
+        # 使用轻量级模型
+        EMBEDDING_MODEL = SentenceTransformer('bge-base-zh')
+        print("[O-Mind] Loaded bge-base-zh model")
+    return EMBEDDING_MODEL
+
+def get_text_embedding(text: str) -> List[float]:
+    """将文本转换为向量（使用 sentence-transformers）"""
+    try:
+        model = get_embedding_model()
+        embedding = model.encode(text, normalize_embeddings=True)
+        return embedding.tolist()
+    except Exception as e:
+        print(f"[O-Mind] Embedding error: {e}")
+        # 降级到简单hash
+        import hashlib
+        h = hashlib.md5(text.encode()).digest()
+        vector = list(h * (384 // 16 + 1))[:384]
+        norm = np.linalg.norm(vector)
+        if norm > 0:
+            vector = [v / norm for v in vector]
+        return vector
+
+# 判断是否应该保存这条记忆
+def should_save_memory(content: str) -> bool:
+    """过滤规则：判断是否应该保存这条记忆"""
+    if not content:
+        return False
+    
+    # 过滤明显的元数据类内容（完全没用的）
+    if content.startswith('Conversation info'):
+        return False
+    if content.startswith('System:'):
+        return False
+    if content.startswith('Pre-compaction'):
+        return False
+    if content.startswith('Sender (untrusted'):
+        return False
+    
+    # 过滤带前缀的元数据
+    if content.startswith('- Conversation info'):
+        return False
+    if content.startswith('- System:'):
+        return False
+    if content.startswith('- Sender (untrusted'):
+        return False
+    
+    # 过滤太短的（可能无效）
+    if len(content) < 3:
+        return False
+    
+    return True
+
+# 保存到 Qdrant
+def save_to_qdrant(memory_id: str, content: str, instance_id: str, agent_id: str = None):
+    """保存向量到 Qdrant"""
+    try:
+        client = get_qdrant_client()
+        vector = get_text_embedding(content)
+        
+        client.upsert(
+            collection_name="memories",
+            points=[
+                PointStruct(
+                    id=memory_id,
+                    vector=vector,
+                    payload={
+                        "instance_id": instance_id,
+                        "agent_id": agent_id or ""
+                    }
+                )
+            ]
+        )
+        print(f"[O-Mind] Saved vector to Qdrant: {memory_id}")
+    except Exception as e:
+        print(f"[O-Mind] Qdrant save error: {e}")
+
+# 从 Qdrant 搜索
+def search_qdrant(query_text: str, instance_id: str, agent_id: str = None, limit: int = 10) -> List[str]:
+    """从 Qdrant 搜索，返回 memory IDs（使用滚动查询+本地过滤）"""
+    try:
+        client = get_qdrant_client()
+        query_vector = get_text_embedding(query_text)
+        
+        # 获取所有点，然后本地过滤
+        all_points, _ = client.scroll(
+            collection_name="memories",
+            limit=100,
+            with_vectors=True
+        )
+        
+        # 计算相似度并过滤
+        results = []
+        for point in all_points:
+            payload = point.payload or {}
+            if payload.get("instance_id") != instance_id:
+                continue
+            if agent_id and payload.get("agent_id") != agent_id:
+                continue
+            
+            # 计算余弦相似度
+            if point.vector and isinstance(point.vector, list):
+                dot = sum(a * b for a, b in zip(query_vector, point.vector))
+                norm1 = sum(a * a for a in query_vector) ** 0.5
+                norm2 = sum(a * a for a in point.vector) ** 0.5
+                if norm1 > 0 and norm2 > 0:
+                    score = dot / (norm1 * norm2)
+                    results.append((point.id, score))
+        
+        # 按相似度排序
+        results.sort(key=lambda x: x[1], reverse=True)
+        
+        return [r[0] for r in results[:limit]]
+    except Exception as e:
+        print(f"[O-Mind] Qdrant search error: {e}")
+        return []
+
+# 启动时初始化
+init_qdrant_collection()
 
 # ============ 多实例认证支持 ============
 
@@ -172,27 +322,70 @@ async def verify_key(x_api_key: Optional[str] = Header(None)):
     return {"valid": False, "message": "Invalid API Key"}
 
 
-@app.post("/api/memories", response_model=MemoryResponse)
+@app.post("/api/memories")
 async def create_memory(
     memory: MemoryCreate, 
     db=Depends(get_db),
     instance_info: dict = Depends(verify_api_key)
 ):
-    """创建新记忆（自动关联实例和Agent）"""
+    """创建新记忆（自动关联实例和Agent）- 混合模式：MySQL + Qdrant"""
+    
+    content = memory.content.strip() if memory.content else ""
+    if not content:
+        return {"status": "error", "message": "Empty content"}
+    
+    instance_id = instance_info["instance_id"]
+    
+    # 检查是否已存在相同的记忆（去重）
+    existing = db.query(MemoryModel).filter(
+        MemoryModel.content == content,
+        MemoryModel.instance_id == instance_id
+    ).first()
+    
+    if existing:
+        return {"status": "duplicate", "id": existing.id, "message": "Memory already exists"}
+    
     memory_id = str(uuid4())
     
+    # 1. 保存到 MySQL
     db_memory = MemoryModel(
         id=memory_id,
-        content=memory.content,
+        content=content,
         tags=memory.tags,
         source=memory.source,
         agent_id=memory.agent_id,
         meta=memory.meta,
-        instance_id=instance_info["instance_id"],  # 自动添加实例ID
+        instance_id=instance_id,
     )
     db.add(db_memory)
     db.commit()
     db.refresh(db_memory)
+    
+    # 2. 同时保存到 Qdrant（向量数据库）
+    save_to_qdrant(memory_id, content, instance_id, memory.agent_id)
+    
+    return db_memory
+    
+    memory_id = str(uuid4())
+    instance_id = instance_info["instance_id"]
+    
+    # 1. 保存到 MySQL
+    db_memory = MemoryModel(
+        id=memory_id,
+        content=content,
+        tags=memory.tags,
+        source=memory.source,
+        agent_id=memory.agent_id,
+        meta=memory.meta,
+        instance_id=instance_id,
+    )
+    db.add(db_memory)
+    db.commit()
+    db.refresh(db_memory)
+    
+    # 2. 同时保存到 Qdrant（向量数据库）
+    save_to_qdrant(memory_id, memory.content, instance_id, memory.agent_id)
+    
     return db_memory
 
 
@@ -207,9 +400,30 @@ async def search_memories(
     db=Depends(get_db),
     instance_info: dict = Depends(verify_api_key)
 ):
-    """搜索记忆（自动过滤当前实例）"""
+    """搜索记忆 - 混合模式：Qdrant 向量搜索 + MySQL 查询"""
+    instance_id = instance_info["instance_id"]
+    
+    # 如果有查询文本，使用 Qdrant 向量搜索
+    if q:
+        # 1. 从 Qdrant 获取匹配的 ID 列表
+        memory_ids = search_qdrant(q, instance_id, agent_id, limit)
+        
+        if memory_ids:
+            # 2. 从 MySQL 查询完整记录
+            memories = db.query(MemoryModel).filter(
+                MemoryModel.id.in_(memory_ids),
+                MemoryModel.instance_id == instance_id
+            ).all()
+            
+            # 保持 Qdrant 返回的顺序
+            id_to_memory = {m.id: m for m in memories}
+            return [id_to_memory[mid] for mid in memory_ids if mid in id_to_memory]
+        else:
+            return []
+    
+    # 无查询文本时，使用 MySQL 普通查询
     query = db.query(MemoryModel).filter(
-        MemoryModel.instance_id == instance_info["instance_id"]  # 只查询当前实例的记忆
+        MemoryModel.instance_id == instance_id
     )
 
     if source:
@@ -223,11 +437,67 @@ async def search_memories(
         for tag in tag_list:
             query = query.filter(MemoryModel.tags.contains(tag))
 
+    # 按创建时间倒序排列
+    memories = query.order_by(MemoryModel.created_at.desc()).offset(offset).limit(limit).all()
+    return memories
+
+
+@app.get("/api/memories/list")
+async def list_memories(
+    page: int = 1,
+    page_size: int = 20,
+    q: Optional[str] = None,
+    tags: Optional[str] = None,
+    source: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """分页获取记忆列表（专门给前端用）"""
+    instance_id = instance_info["instance_id"]
+    
+    # 构建查询
+    query = db.query(MemoryModel).filter(
+        MemoryModel.instance_id == instance_id
+    )
+    
+    # 关键词搜索（使用 LIKE）
     if q:
         query = query.filter(MemoryModel.content.contains(q))
-
-    memories = query.offset(offset).limit(limit).all()
-    return memories
+    
+    if source:
+        query = query.filter(MemoryModel.source == source)
+    
+    if agent_id:
+        query = query.filter(MemoryModel.agent_id == agent_id)
+    
+    if tags:
+        tag_list = tags.split(",")
+        for tag in tag_list:
+            query = query.filter(MemoryModel.tags.contains(tag))
+    
+    # 获取总数
+    total = query.count()
+    
+    # 分页查询
+    offset = (page - 1) * page_size
+    memories = query.order_by(MemoryModel.created_at.desc()).offset(offset).limit(page_size).all()
+    
+    return {
+        "items": memories,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size
+    }
+    
+    return {
+        "items": memories,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size
+    }
 
 
 @app.get("/api/memories/search/vector", response_model=List[MemoryResponse])
