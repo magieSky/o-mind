@@ -266,6 +266,44 @@ class MemoryModel(Base):
     vector_id = Column(String(36), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    topic_id = Column(String(36), nullable=True)
+    topic_type = Column(String(20), nullable=True)
+    is_topic_summary = Column(String(10), nullable=True)
+
+
+class TopicModel(Base):
+    __tablename__ = "topics"
+    
+    id = Column(String(36), primary_key=True)
+    name = Column(String(255), nullable=True)
+    topic_type = Column(String(20), default="session")
+    status = Column(String(20), default="active")
+    session_id = Column(String(36), nullable=True)
+    parent_topic_id = Column(String(36), nullable=True)
+    message_count = Column(Integer, default=0)
+    user_message_count = Column(Integer, default=0)
+    started_at = Column(DateTime, nullable=True)
+    last_message_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    summary = Column(Text, nullable=True)
+    summary_version = Column(Integer, default=1)
+    keywords = Column(JSON, nullable=True)
+    context_embedding = Column(JSON, nullable=True)
+    agent_id = Column(String(255), nullable=True)
+    group_id = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class TopicMessageModel(Base):
+    __tablename__ = "topic_messages"
+    
+    id = Column(String(36), primary_key=True)
+    topic_id = Column(String(36), nullable=False)
+    memory_id = Column(String(36), nullable=False)
+    role = Column(String(20), nullable=True)
+    sequence_order = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
 
 
 # ============ Pydantic 模型 ============
@@ -791,6 +829,89 @@ async def get_stats(
         "total_agents": len([a[0] for a in agents if a[0]]),
         "tag_counts": tag_counts,
         "instance_id": instance_info["instance_id"]
+    }
+
+
+# ============ 话题 API ============
+
+@app.get("/api/topics")
+async def list_topics(
+    agent_id: Optional[str] = None,
+    status: str = "active",
+    page: int = 1,
+    page_size: int = 20,
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """获取话题列表"""
+    query = db.query(TopicModel).filter(
+        TopicModel.agent_id == agent_id
+    ) if agent_id else db.query(TopicModel)
+    
+    if status:
+        query = query.filter(TopicModel.status == status)
+    
+    total = query.count()
+    topics = query.order_by(TopicModel.last_message_at.desc()).offset((page-1)*page_size).limit(page_size).all()
+    
+    return {
+        "items": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "topic_type": t.topic_type,
+                "status": t.status,
+                "message_count": t.message_count,
+                "summary": t.summary[:200] + "..." if t.summary and len(t.summary) > 200 else t.summary,
+                "started_at": t.started_at.isoformat() if t.started_at else None,
+                "last_message_at": t.last_message_at.isoformat() if t.last_message_at else None,
+            }
+            for t in topics
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    }
+
+
+@app.get("/api/topics/{topic_id}")
+async def get_topic(
+    topic_id: str,
+    db=Depends(get_db),
+    instance_info: dict = Depends(verify_api_key)
+):
+    """获取话题详情"""
+    topic = db.query(TopicModel).filter(TopicModel.id == topic_id).first()
+    
+    if not topic:
+        return {"error": "Topic not found"}
+    
+    # 获取话题消息
+    topic_msgs = db.query(TopicMessageModel).filter(
+        TopicMessageModel.topic_id == topic_id
+    ).order_by(TopicMessageModel.sequence_order).all()
+    
+    memories = []
+    for tm in topic_msgs:
+        mem = db.query(MemoryModel).filter(MemoryModel.id == tm.memory_id).first()
+        if mem:
+            memories.append({
+                "id": mem.id,
+                "content": mem.content[:200] + "..." if len(mem.content) > 200 else mem.content,
+                "role": tm.role,
+                "created_at": mem.created_at.isoformat() if mem.created_at else None
+            })
+    
+    return {
+        "id": topic.id,
+        "name": topic.name,
+        "topic_type": topic.topic_type,
+        "status": topic.status,
+        "message_count": topic.message_count,
+        "summary": topic.summary,
+        "started_at": topic.started_at.isoformat() if topic.started_at else None,
+        "last_message_at": topic.last_message_at.isoformat() if topic.last_message_at else None,
+        "messages": memories
     }
 
 
