@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+# 注意：使用 datetime.now() 获取本地时间
 from typing import Optional, List
 from uuid import uuid4
 
@@ -51,8 +52,11 @@ def get_embedding_model():
     if EMBEDDING_MODEL is None:
         from sentence_transformers import SentenceTransformer
         # 使用轻量级模型
-        EMBEDDING_MODEL = SentenceTransformer('bge-base-zh')
-        print("[O-Mind] Loaded bge-base-zh model")
+        # 使用国内镜像源下载模型
+        import os
+        os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+        EMBEDDING_MODEL = SentenceTransformer('BAAI/bge-base-zh-v1.5')
+        print("[O-Mind] Loaded bge-base-zh-v1.5 model (768 dim)")
     return EMBEDDING_MODEL
 
 def get_text_embedding(text: str) -> List[float]:
@@ -156,7 +160,10 @@ def search_qdrant(query_text: str, instance_id: str, agent_id: str = None, limit
                 norm2 = sum(a * a for a in point.vector) ** 0.5
                 if norm1 > 0 and norm2 > 0:
                     score = dot / (norm1 * norm2)
-                    results.append((point.id, score))
+                    # 只返回相似度 >= threshold 的结果
+                    threshold = float(os.getenv("SIMILARITY_THRESHOLD", "0.7"))
+                    if score >= threshold:
+                        results.append((point.id, score))
         
         # 按相似度排序
         results.sort(key=lambda x: x[1], reverse=True)
@@ -168,6 +175,31 @@ def search_qdrant(query_text: str, instance_id: str, agent_id: str = None, limit
 
 # 启动时初始化
 init_qdrant_collection()
+
+# 启动定时摘要任务
+def start_summary_scheduler():
+    """启动每小时摘要定时任务"""
+    import threading
+    import time
+    from datetime import datetime
+    
+    def run_summary():
+        while True:
+            # 每小时运行一次
+            time.sleep(3600)
+            try:
+                from api.summary_task import run_hourly_summary
+                print(f"[Scheduler] Running hourly summary at {datetime.now()}")
+                run_summary()
+            except Exception as e:
+                print(f"[Scheduler] Summary task failed: {e}")
+    
+    thread = threading.Thread(target=run_summary, daemon=True)
+    thread.start()
+    print("[Scheduler] Hourly summary scheduler started")
+
+# 启动定时摘要任务
+start_summary_scheduler()
 
 # ============ 多实例认证支持 ============
 
@@ -232,8 +264,8 @@ class MemoryModel(Base):
     agent_id = Column(String(64), nullable=True)  # Agent ID
     meta = Column(JSON, default=dict)
     vector_id = Column(String(36), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 # ============ Pydantic 模型 ============
@@ -364,6 +396,16 @@ async def create_memory(
     # 2. 同时保存到 Qdrant（向量数据库）
     save_to_qdrant(memory_id, content, instance_id, memory.agent_id)
     
+    # 3. 话题识别与关联
+    try:
+        from api.topic_service import process_message
+        # 判断是否是用户消息
+        role = "user" if memory.source in ["hook", "user"] else "assistant"
+        topic_id = process_message(memory.agent_id, content, memory_id, role)
+        print(f"[O-Mind] Message linked to topic: {topic_id}")
+    except Exception as e:
+        print(f"[O-Mind] Topic processing error: {e}")
+    
     return db_memory
     
     memory_id = str(uuid4())
@@ -417,9 +459,29 @@ async def search_memories(
             
             # 保持 Qdrant 返回的顺序
             id_to_memory = {m.id: m for m in memories}
-            return [id_to_memory[mid] for mid in memory_ids if mid in id_to_memory]
+            results = [id_to_memory[mid] for mid in memory_ids if mid in id_to_memory]
         else:
-            return []
+            results = []
+    else:
+        results = []
+    
+    # 自动获取最新摘要并添加到结果最前面（按 agent 维度）
+    summary = db.query(MemoryModel).filter(
+        MemoryModel.instance_id == instance_id,
+        MemoryModel.agent_id == agent_id,  # 只获取当前 agent 的摘要
+        MemoryModel.tags.like('%summary%')
+    ).order_by(MemoryModel.created_at.desc()).first()
+    
+    if summary:
+        # 将摘要放到结果最前面（如果不在结果中）
+        if summary not in results:
+            results.insert(0, summary)
+        # 如果摘要已在结果中（通过向量搜索匹配），移到最前
+        elif results[0] != summary:
+            results.remove(summary)
+            results.insert(0, summary)
+    
+    return results
     
     # 无查询文本时，使用 MySQL 普通查询
     query = db.query(MemoryModel).filter(
@@ -482,6 +544,16 @@ async def list_memories(
     # 分页查询
     offset = (page - 1) * page_size
     memories = query.order_by(MemoryModel.created_at.desc()).offset(offset).limit(page_size).all()
+    
+    # 自动获取最新摘要并添加到结果最前面（首页且无搜索时）
+    if page == 1 and not q:
+        summary = db.query(MemoryModel).filter(
+            MemoryModel.instance_id == instance_id,
+            MemoryModel.tags.like('%summary%')
+        ).order_by(MemoryModel.created_at.desc()).first()
+        
+        if summary and summary not in memories:
+            memories.insert(0, summary)
     
     return {
         "items": memories,
@@ -571,7 +643,7 @@ async def update_memory(
     if memory.meta is not None:
         db_memory.meta = memory.meta
 
-    db_memory.updated_at = datetime.utcnow()
+    db_memory.updated_at = datetime.now()
     db.commit()
     db.refresh(db_memory)
     return db_memory
