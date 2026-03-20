@@ -160,10 +160,11 @@ export default {
         const prompt = extractUserMessage(evt?.prompt);
         console.error("prompt: " + prompt)
         
-        const keywords = prompt.slice(0, 100);
+        const keywords = prompt;
         const agentId = ctx.sessionKey || ctx.sessionId || '';
         const result = await callOMind(`/api/memories?q=${encodeURIComponent(keywords)}&agent_id=${encodeURIComponent(agentId)}&limit=10`);
         const memories = result || [];
+        console.error(`✅ 注入 记忆到 LLM 上下文`,JSON.stringify(memories));
         console.error(`✅ 注入 ${memories.length} 条记忆到 LLM 上下文`);
         if (memories.length === 0) return;
         
