@@ -7,7 +7,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, Column, String, DateTime, Text, JSON, and_
+from sqlalchemy import create_engine, Column, String, DateTime, Text, JSON, Integer, and_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from qdrant_client import QdrantClient
