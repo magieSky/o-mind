@@ -198,8 +198,31 @@ def start_summary_scheduler():
     thread.start()
     print("[Scheduler] Hourly summary scheduler started")
 
+
+def start_topic_scheduler():
+    """启动话题定时任务"""
+    import threading
+    import time
+    from datetime import datetime
+    
+    def run_topic_summary():
+        while True:
+            # 每30分钟运行一次
+            time.sleep(1800)
+            try:
+                from api.topic_scheduler import run_topic_scheduler
+                print(f"[Topic Scheduler] Running at {datetime.now()}")
+                run_topic_scheduler()
+            except Exception as e:
+                print(f"[Topic Scheduler] Topic task failed: {e}")
+    
+    thread = threading.Thread(target=run_topic_summary, daemon=True)
+    thread.start()
+    print("[Topic Scheduler] Topic scheduler started")
+
 # 启动定时摘要任务
 start_summary_scheduler()
+start_topic_scheduler()
 
 # ============ 多实例认证支持 ============
 
