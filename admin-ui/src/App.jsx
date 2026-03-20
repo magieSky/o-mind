@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Layout, Menu, theme, Statistic, Card, Row, Col, Table, Tag, Button, Input, Modal, Form, message, Select, Badge, Space, Switch, Checkbox, Popconfirm, Typography, Timeline } from 'antd'
+import { Layout, Menu, theme, Statistic, Card, Row, Col, Table, Tag, Button, Input, Modal, Form, message, Select, Badge, Space, Switch, Checkbox, Popconfirm, Typography, Timeline, Alert, List } from 'antd'
 import { InboxOutlined, AppstoreOutlined, TeamOutlined, SettingOutlined, PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ApiOutlined, ExportOutlined, ImportOutlined, BarChartOutlined, SunOutlined, MoonOutlined, DeleteFilled } from '@ant-design/icons'
 import axios from 'axios'
 
@@ -150,7 +150,7 @@ function App({ darkMode: propDarkMode, setDarkMode: propSetDarkMode }) {
             {currentView === 'memories' && <MemoriesView api={api} apiKey={apiKey} darkMode={darkMode} />}
             {currentView === 'stats' && <StatsView api={api} apiKey={apiKey} darkMode={darkMode} />}
             {currentView === 'agents' && <AgentsView api={api} apiKey={apiKey} darkMode={darkMode} />}
-            {currentView === 'settings' && <SettingsView darkMode={darkMode} />}
+            {currentView === 'settings' && <SettingsView api={api} apiKey={apiKey} darkMode={darkMode} />}
           </Content>
         </Layout>
       </Layout>
@@ -333,7 +333,7 @@ function MemoriesView({ api, apiKey, darkMode }) {
       dataIndex: 'created_at',
       key: 'created_at',
       width: '15%',
-      render: (date) => new Date(date).toLocaleString('zh-CN')
+      render: (date) => date ? new Date(date + '+08:00').toLocaleString('zh-CN') : ''
     },
     {
       title: '操作',
@@ -374,7 +374,7 @@ function MemoriesView({ api, apiKey, darkMode }) {
           <Card>
             <Statistic
               title="Agent 数量"
-              value={new Set(memories.map(m => m.agent_id).filter(Boolean)).size}
+              value={memories.total_agents || memories.agentCount || new Set(memories.items?.map(m => m.agent_id).filter(Boolean)).size || 0}
               prefix={<TeamOutlined />}
             />
           </Card>
@@ -535,17 +535,11 @@ function AgentsView({ api, apiKey, darkMode }) {
     setLoading(true)
     try {
       const res = await api.get('/api/agents')
-      // 获取每个Agent的记忆数量
-      const agentData = await Promise.all(
-        res.data.map(async (agentId) => {
-          try {
-            const memRes = await api.get('/api/memories', { params: { agent_id: agentId, limit: 1000 } })
-            return { agentId, count: memRes.data.length }
-          } catch {
-            return { agentId, count: 0 }
-          }
-        })
-      )
+      // /api/agents 现在返回对象数组 [{agent_id, memory_count, name}, ...]
+      const agentData = res.data.map((agent) => ({
+        agentId: agent.agent_id,
+        count: agent.memory_count
+      }))
       setAgents(agentData)
     } catch (err) {
       console.error('Failed to fetch agents:', err)
@@ -567,7 +561,7 @@ function AgentsView({ api, apiKey, darkMode }) {
       title: '记忆数量',
       dataIndex: 'count',
       key: 'count',
-      render: (count) => <Badge count={count} showZero color="blue" />
+      render: (count) => <Badge count={count} showZero color="blue" overflowCount={Infinity} />
     }
   ]
 
@@ -586,25 +580,60 @@ function AgentsView({ api, apiKey, darkMode }) {
 }
 
 // 设置组件
-function SettingsView({ darkMode }) {
-  const [apiKey, setApiKey] = useState(localStorage.getItem('apiKey') || '')
+function SettingsView({ api, apiKey, darkMode }) {
   const [saved, setSaved] = useState(false)
+  const [keys, setKeys] = useState([])
+  const [newKeyName, setNewKeyName] = useState('')
+  const [newKeyInstance, setNewKeyInstance] = useState('')
+  const [generatedKey, setGeneratedKey] = useState('')
+  const [loading, setLoading] = useState(false)
 
   const handleSave = () => {
-    localStorage.setItem('apiKey', apiKey)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  const fetchKeys = async () => {
+    try {
+      const res = await api.get('/api/keys')
+      setKeys(res.data)
+    } catch (err) {
+      console.error('Failed to fetch keys:', err)
+    }
+  }
+
+  useEffect(() => {
+    fetchKeys()
+  }, [api])
+
+  const handleCreateKey = async () => {
+    if (!newKeyName) return
+    setLoading(true)
+    try {
+      const res = await api.post('/api/keys', {
+        name: newKeyName,
+        instance_id: newKeyInstance || 'default'
+      })
+      setGeneratedKey(res.data.key)
+      setNewKeyName('')
+      setNewKeyInstance('')
+      fetchKeys()
+    } catch (err) {
+      message.error('创建失败')
+    }
+    setLoading(false)
   }
 
   return (
     <div style={{ padding: 24 }}>
       <Title level={3}>设置</Title>
-      <Card title="基本设置" style={{ maxWidth: 500 }}>
+      
+      <Card title="当前 API Key" style={{ maxWidth: 500, marginBottom: 16 }}>
         <Form layout="vertical">
           <Form.Item label="API Key">
             <Input
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
+              onChange={(e) => api.setApiKey?.(e.target.value) || localStorage.setItem('apiKey', e.target.value)}
               placeholder="输入 API Key"
             />
           </Form.Item>
@@ -614,6 +643,55 @@ function SettingsView({ darkMode }) {
             </Button>
           </Form.Item>
         </Form>
+      </Card>
+
+      <Card title="创建新的 API Key" style={{ maxWidth: 500 }}>
+        {generatedKey && (
+          <Alert 
+            message="新 API Key 已创建（请立即保存，重启服务后会失效）" 
+            description={generatedKey} 
+            type="success" 
+            showIcon 
+            style={{ marginBottom: 16 }}
+            closable
+            onClose={() => setGeneratedKey('')}
+          />
+        )}
+        <Form layout="vertical">
+          <Form.Item label="Key 名称">
+            <Input
+              value={newKeyName}
+              onChange={(e) => setNewKeyName(e.target.value)}
+              placeholder="例如: 测试环境"
+            />
+          </Form.Item>
+          <Form.Item label="实例 ID">
+            <Input
+              value={newKeyInstance}
+              onChange={(e) => setNewKeyInstance(e.target.value)}
+              placeholder="例如: test-1"
+            />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" onClick={handleCreateKey} loading={loading} disabled={!newKeyName}>
+              创建 Key
+            </Button>
+          </Form.Item>
+        </Form>
+      </Card>
+
+      <Card title="已有的 API Keys" style={{ maxWidth: 500, marginTop: 16 }}>
+        <List
+          dataSource={keys}
+          renderItem={(item) => (
+            <List.Item>
+              <List.Item.Meta
+                title={item.name}
+                description={`实例: ${item.instance_id} | Key: ${item.key}`}
+              />
+            </List.Item>
+          )}
+        />
       </Card>
     </div>
   )

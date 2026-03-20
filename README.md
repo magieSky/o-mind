@@ -7,12 +7,14 @@
 - 🧠 **长久记忆** - 会话历史自动保存到本地数据库
 - 🔒 **私有化部署** - 所有数据存储在本地服务器，安全可控
 - ⚡ **自动化钩子** - 无需手动操作，自动完成记忆存取
-- 🔍 **向量搜索** - 支持语义相似度搜索（使用 sentence-transformers）
+- 🔍 **向量搜索** - 支持语义相似度搜索（使用 bge-base-zh-v1.5）
+- 📝 **会话摘要** - 每小时自动生成会话摘要，注入上下文
 - 🐳 **Docker 部署** - 一键部署，支持 Docker Compose
 - 🌐 **管理界面** - 可视化管理记忆和 Agent
 - 🔑 **多实例隔离** - 支持多个 OpenClaw 实例，每个实例独立记忆
 - 📝 **用户+助手消息** - 自动保存用户消息和 AI 回复
 - 🔄 **去重** - 自动检测重复内容，避免重复存储
+- 🎯 **相似度过滤** - 只返回相似度 >= 0.7 的结果
 
 ## 🏗️ 架构
 
@@ -148,9 +150,9 @@ MEMORY_API_KEY=key-prod-1
 
 ### 1. 向量语义搜索
 
-- 使用 **sentence-transformers** (bge-base-zh) 生成 768 维语义向量
+- 使用 **bge-base-zh-v1.5** 生成 768 维语义向量
 - 通过 **Qdrant** 向量数据库进行相似度匹配
-- 返回最相似的记忆 ID 列表
+- 只返回相似度 >= 0.7 的结果
 
 ### 2. 数据关联
 
@@ -162,6 +164,12 @@ MEMORY_API_KEY=key-prod-1
 
 - 每次保存前检查相同内容是否已存在
 - 相同内容返回 `{"status": "duplicate"}` 不重复存储
+
+### 4. 会话摘要自动注入
+
+- 每小时自动生成会话摘要（使用 MiniMax M2.5）
+- 搜索时自动将最新摘要放到结果最前面
+- 摘要包含：主要话题、关键决策和解决方法、待处理事项
 
 ## 🌐 多实例配置
 
@@ -219,15 +227,24 @@ docker restart o-mind-api
 ```
 O-Mind/
 ├── api/                      # FastAPI 服务
-│   └── main.py              # 主服务代码（含向量搜索）
+│   ├── main.py              # 主服务代码（含向量搜索、摘要注入）
+│   └── summary_task.py       # 定时摘要任务
 ├── admin-ui/                 # React 管理界面
 ├── openclaw-plugin/          # OpenClaw Plugin
 ├── docker-compose.yml        # Docker Compose 配置
 ├── Dockerfile               # API 服务镜像
 ├── requirements.txt         # Python 依赖
-│   └── sentence-transformers  # 向量embedding
 └── README.md               # 项目说明
 ```
+
+## 📋 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| MYSQL_HOST | MySQL 主机 | memory-mysql |
+| QDRANT_HOST | Qdrant 主机 | memory-qdrant |
+| MINIMAX_API_KEY | MiniMax API Key（用于摘要生成） | - |
+| MEMORY_API_KEYS | 多实例 API Keys (JSON) | - |
 
 ## 📝 保存的内容
 
@@ -238,12 +255,21 @@ O-Mind/
 - ✅ 项目背景和需求
 - ✅ 问题和解决方案
 - ✅ 工作摘要
+- ✅ **自动生成的会话摘要**（每小时）
+
+### 会话摘要
+
+- 每小时自动总结会话内容
+- 包含：主要话题、关键决策和解决方法、待处理事项
+- 摘要会累积（每次新摘要基于上一次的摘要）
+- 搜索时自动注入到上下文最前面
 
 ### 自动过滤
 
 - ❌ 系统元数据（Conversation info、System:）
 - ❌ 调试日志（Traceback、mysql:）
 - ❌ 重复内容
+- ❌ 相似度 < 0.7 的内容
 
 ## 🔧 故障排除
 

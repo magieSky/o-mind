@@ -354,9 +354,12 @@ def generate_summary_with_llm(messages: List[Dict], previous_summary: str = "",
 ### 待办
 ..."""
 
+    # 修复 f-string 中不能包含反斜杠的问题
+    api_url = f"{MINIMAX_BASE_URL}/text/chatcompletion_v2"
+    
     try:
         response = httpx.post(
-            f"{MINIMAX_BASE_URL}/text/chatcompletion_v2",
+            api_url,
             headers={
                 "Authorization": f"Bearer {MINIMAX_API_KEY}",
                 "Content-Type": "application/json; charset=utf-8"
