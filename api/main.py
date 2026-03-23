@@ -968,6 +968,30 @@ async def get_topic_relations(topic_id: str):
     }
 
 
+@app.get("/api/topics/{topic_id}/tree")
+async def get_topic_tree(topic_id: str):
+    """获取话题的树结构（父话题 + 子话题）"""
+    try:
+        from api.topic_service import get_topic_tree
+        return get_topic_tree(topic_id)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/topics/{topic_id}/aggregate")
+async def aggregate_subtopic_summaries(topic_id: str):
+    """聚合子话题摘要到父话题"""
+    try:
+        from api.topic_service import aggregate_subtopic_summaries, save_topic_summary
+        summary = aggregate_subtopic_summaries(topic_id)
+        if summary:
+            save_topic_summary(topic_id, summary)
+            return {"status": "success", "summary": summary}
+        return {"status": "no_subtopics", "message": "No subtopic summaries to aggregate"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 @app.post("/api/topics/batch-update-embeddings")
 async def batch_update_embeddings():
     """批量更新话题向量"""
