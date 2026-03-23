@@ -938,6 +938,47 @@ async def get_topic(
     }
 
 
+@app.get("/api/topics/{topic_id}/relations")
+async def get_topic_relations(topic_id: str):
+    """获取话题的关联话题"""
+    from sqlalchemy import text
+    
+    relations = db.execute(text("""
+        SELECT tr.target_topic_id, tr.similarity, t.name, t.topic_type, t.status, t.last_message_at
+        FROM topic_relations tr
+        JOIN topics t ON tr.target_topic_id = t.id
+        WHERE tr.source_topic_id = :topic_id
+        ORDER BY tr.similarity DESC
+        LIMIT 10
+    """), {"topic_id": topic_id}).fetchall()
+    
+    return {
+        "topic_id": topic_id,
+        "relations": [
+            {
+                "topic_id": r[0],
+                "similarity": r[1],
+                "name": r[2],
+                "topic_type": r[3],
+                "status": r[4],
+                "last_message_at": r[5].isoformat() if r[5] else None
+            }
+            for r in relations
+        ]
+    }
+
+
+@app.post("/api/topics/batch-update-embeddings")
+async def batch_update_embeddings():
+    """批量更新话题向量"""
+    try:
+        from api.vector_service import update_all_topic_embeddings
+        update_all_topic_embeddings()
+        return {"status": "success", "message": "Topic embeddings updated"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

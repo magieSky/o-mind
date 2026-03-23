@@ -455,6 +455,46 @@ def check_and_generate_summary(topic_id: str) -> bool:
     return False
 
 
+# ==================== 跨会话话题关联 ====================
+
+def link_to_related_topics(agent_id: str, content: str, current_topic_id: str):
+    """将当前话题关联到历史相关话题"""
+    try:
+        from api.vector_service import find_related_topics, link_to_related_topic
+        
+        # 查找相关话题
+        related = find_related_topics(agent_id, content, exclude_topic_id=current_topic_id)
+        
+        if related:
+            # 关联到相关话题
+            link_to_related_topic(current_topic_id, related)
+            print(f"[Topic] Linked to {len(related)} related topics: {[r['topic_name'] for r in related]}")
+            return related
+        
+    except Exception as e:
+        print(f"[Topic] Failed to link related topics: {e}")
+    
+    return []
+
+
+def update_topic_embedding(topic_id: str):
+    """更新话题的向量表示"""
+    try:
+        from api.vector_service import generate_topic_embedding, save_topic_embedding, get_topic_messages
+        
+        messages = get_topic_messages(topic_id, limit=10)
+        embedding = generate_topic_embedding(topic_id, messages)
+        
+        if embedding:
+            save_topic_embedding(topic_id, embedding)
+            print(f"[Topic] Updated embedding for topic: {topic_id}")
+            return True
+    except Exception as e:
+        print(f"[Topic] Failed to update embedding: {e}")
+    
+    return False
+
+
 # ==================== 对外接口 ====================
 
 def process_message(agent_id: str, content: str, memory_id: str, role: str = "user"):
@@ -469,7 +509,23 @@ def process_message(agent_id: str, content: str, memory_id: str, role: str = "us
     # 2. 关联消息到话题
     link_message_to_topic(topic_id, memory_id, role)
     
-    # 3. 检查是否需要生成摘要
+    # 3. 如果是新话题，尝试关联到历史相关话题
+    if is_new:
+        related = link_to_related_topics(agent_id, content, topic_id)
+    
+    # 4. 更新话题向量（每5条消息更新一次）
+    engine = get_db()
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT message_count FROM topics WHERE id = :topic_id
+        """), {"topic_id": topic_id})
+        row = result.fetchone()
+        msg_count = row[0] if row else 0
+    
+    if msg_count % 5 == 0:
+        update_topic_embedding(topic_id)
+    
+    # 5. 检查是否需要生成摘要
     check_and_generate_summary(topic_id)
     
     return topic_id
