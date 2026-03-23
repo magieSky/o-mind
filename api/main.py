@@ -350,10 +350,10 @@ class MemoryResponse(BaseModel):
     id: str
     content: str
     tags: List[str]
-    source: Optional[str]
+    source: Optional[str] = None
     instance_id: str
-    agent_id: Optional[str]
-    meta: dict
+    agent_id: Optional[str] = None
+    meta: dict = {}
     created_at: datetime
     updated_at: datetime
 
