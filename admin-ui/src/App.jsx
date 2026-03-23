@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Layout, Menu, theme, Statistic, Card, Row, Col, Table, Tag, Button, Input, Modal, Form, message, Select, Badge, Space, Switch, Checkbox, Popconfirm, Typography, Timeline, Alert, List } from 'antd'
+import { Layout, Menu, theme, Statistic, Card, Row, Col, Table, Tag, Button, Input, Modal, Form, message, Select, Badge, Space, Switch, Checkbox, Popconfirm, Typography, Timeline, Alert, List, Tabs } from 'antd'
 import { InboxOutlined, AppstoreOutlined, TeamOutlined, SettingOutlined, PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ApiOutlined, ExportOutlined, ImportOutlined, BarChartOutlined, SunOutlined, MoonOutlined, DeleteFilled } from '@ant-design/icons'
 import axios from 'axios'
 
@@ -84,6 +84,11 @@ function App({ darkMode: propDarkMode, setDarkMode: propSetDarkMode }) {
       label: '记忆管理'
     },
     {
+      key: 'topics',
+      icon: <AppstoreOutlined />,
+      label: '话题管理'
+    },
+    {
       key: 'stats',
       icon: <BarChartOutlined />,
       label: '数据统计'
@@ -148,6 +153,7 @@ function App({ darkMode: propDarkMode, setDarkMode: propSetDarkMode }) {
             }}
           >
             {currentView === 'memories' && <MemoriesView api={api} apiKey={apiKey} darkMode={darkMode} />}
+            {currentView === 'topics' && <TopicsView api={api} apiKey={apiKey} darkMode={darkMode} />}
             {currentView === 'stats' && <StatsView api={api} apiKey={apiKey} darkMode={darkMode} />}
             {currentView === 'agents' && <AgentsView api={api} apiKey={apiKey} darkMode={darkMode} />}
             {currentView === 'settings' && <SettingsView api={api} apiKey={apiKey} darkMode={darkMode} />}
@@ -693,6 +699,270 @@ function SettingsView({ api, apiKey, darkMode }) {
           )}
         />
       </Card>
+    </div>
+  )
+}
+
+// 话题管理组件
+function TopicsView({ api, apiKey, darkMode }) {
+  const [topics, setTopics] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [selectedTopic, setSelectedTopic] = useState(null)
+  const [topicTree, setTopicTree] = useState(null)
+  const [relations, setRelations] = useState([])
+  const [topicMessages, setTopicMessages] = useState([])
+  const [pagination, setPagination] = useState({ total: 0, current: 1, pageSize: 20 })
+  const [statusFilter, setStatusFilter] = useState('all')
+
+  const fetchTopics = async (page = 1, status = 'all') => {
+    setLoading(true)
+    try {
+      const params = { page: page, page_size: 20 }
+      if (status !== 'all') params.status = status
+      const res = await api.get('/api/topics', { params })
+      setTopics(res.data.items || [])
+      setPagination({ 
+        ...pagination, 
+        total: res.data.total || 0, 
+        current: res.data.page || 1 
+      })
+    } catch (err) {
+      message.error('获取话题列表失败')
+    }
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchTopics(1, statusFilter)
+  }, [apiKey, statusFilter])
+
+  const handleTopicClick = async (topic) => {
+    setSelectedTopic(topic)
+    try {
+      // 获取话题详情和消息
+      const [detailRes, treeRes] = await Promise.all([
+        api.get(`/api/topics/${topic.topic_id}`),
+        api.get(`/api/topics/${topic.topic_id}/tree`).catch(() => ({ data: {} }))
+      ])
+      setTopicMessages(detailRes.data.messages || [])
+      setTopicTree(treeRes.data)
+      
+      // 获取关联话题
+      try {
+        const relRes = await api.get(`/api/topics/${topic.topic_id}/relations`)
+        setRelations(relRes.data.relations || [])
+      } catch {
+        setRelations([])
+      }
+    } catch (err) {
+      message.error('获取话题详情失败')
+    }
+  }
+
+  const getStatusColor = (status) => {
+    const colors = { active: 'green', paused: 'orange', completed: 'blue', archived: 'gray' }
+    return colors[status] || 'default'
+  }
+
+  const getTypeColor = (type) => {
+    const colors = { session: 'blue', task: 'purple', subtask: 'cyan', emergency: 'red' }
+    return colors[type] || 'default'
+  }
+
+  const columns = [
+    {
+      title: '话题名称',
+      dataIndex: 'name',
+      key: 'name',
+      render: (text, record) => (
+        <a onClick={() => handleTopicClick(record)}>{text}</a>
+      )
+    },
+    {
+      title: '类型',
+      dataIndex: 'topic_type',
+      key: 'topic_type',
+      width: 80,
+      render: (type) => <Tag color={getTypeColor(type)}>{type || 'session'}</Tag>
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 80,
+      render: (status) => <Tag color={getStatusColor(status)}>{status}</Tag>
+    },
+    {
+      title: '消息数',
+      dataIndex: 'message_count',
+      key: 'message_count',
+      width: 80,
+      sorter: (a, b) => a.message_count - b.message_count
+    },
+    {
+      title: '开始时间',
+      dataIndex: 'started_at',
+      key: 'started_at',
+      width: 160,
+      render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-'
+    },
+    {
+      title: '最新消息',
+      dataIndex: 'last_message_at',
+      key: 'last_message_at',
+      width: 160,
+      render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-'
+    }
+  ]
+
+  return (
+    <div style={{ padding: '0' }}>
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col span={12}>
+          <Space>
+            <Select 
+              value={statusFilter} 
+              onChange={setStatusFilter}
+              style={{ width: 120 }}
+            >
+              <Select.Option value="all">全部状态</Select.Option>
+              <Select.Option value="active">进行中</Select.Option>
+              <Select.Option value="paused">已暂停</Select.Option>
+              <Select.Option value="completed">已完成</Select.Option>
+            </Select>
+            <Button icon={<AppstoreOutlined />} onClick={() => fetchTopics(1, statusFilter)}>
+              刷新
+            </Button>
+          </Space>
+        </Col>
+        <Col span={12} style={{ textAlign: 'right' }}>
+          <Badge count={pagination.total} style={{ marginRight: 16 }}>话题总数</Badge>
+        </Col>
+      </Row>
+
+      <Row gutter={16}>
+        <Col span={selectedTopic ? 12 : 24}>
+          <Table
+            columns={columns}
+            dataSource={topics}
+            loading={loading}
+            rowKey="topic_id"
+            pagination={{
+              current: pagination.current,
+              total: pagination.total,
+              pageSize: pagination.pageSize,
+              onChange: (page) => fetchTopics(page, statusFilter),
+              showSizeChanger: false
+            }}
+            size="small"
+          />
+        </Col>
+        
+        {selectedTopic && (
+          <Col span={12}>
+            <Card 
+              title={
+                <Space>
+                  <span>{selectedTopic.name}</span>
+                  <Tag color={getTypeColor(selectedTopic.topic_type)}>{selectedTopic.topic_type}</Tag>
+                  <Tag color={getStatusColor(selectedTopic.status)}>{selectedTopic.status}</Tag>
+                </Space>
+              }
+              extra={<Button type="link" onClick={() => setSelectedTopic(null)}>关闭</Button>}
+            >
+              <Tabs 
+                defaultActiveKey="summary" 
+                items={[
+                  {
+                    key: 'summary',
+                    label: '摘要',
+                    children: (
+                      <div>
+                        {selectedTopic.summary ? (
+                          <div style={{ whiteSpace: 'pre-wrap' }}>{selectedTopic.summary}</div>
+                        ) : (
+                          <Alert message="暂无摘要" type="info" showIcon />
+                        )}
+                      </div>
+                    )
+                  },
+                  {
+                    key: 'messages',
+                    label: `消息 (${topicMessages.length})`,
+                    children: (
+                      <List
+                        size="small"
+                        dataSource={topicMessages}
+                        renderItem={(item) => (
+                          <List.Item>
+                            <List.Item.Meta
+                              avatar={<Tag color={item.role === 'user' ? 'blue' : 'green'}>{item.role === 'user' ? '用户' : 'AI'}</Tag>}
+                              title={new Date(item.created_at).toLocaleString('zh-CN')}
+                              description={<div style={{ maxHeight: 100, overflow: 'auto' }}>{item.content}</div>}
+                            />
+                          </List.Item>
+                        )}
+                      />
+                    )
+                  },
+                  {
+                    key: 'tree',
+                    label: '话题树',
+                    children: (
+                      <div>
+                        {topicTree && (
+                          <div>
+                            {topicTree.parent && (
+                              <Alert 
+                                message={`父话题: ${topicTree.parent.name}`} 
+                                type="info" 
+                                style={{ marginBottom: 8 }} 
+                              />
+                            )}
+                            {topicTree.children && topicTree.children.length > 0 && (
+                              <List
+                                size="small"
+                                dataSource={topicTree.children}
+                                renderItem={(item) => (
+                                  <List.Item>
+                                    <Tag>{item.name}</Tag>
+                                    <span style={{ marginLeft: 8 }}>{item.message_count} 条消息</span>
+                                  </List.Item>
+                                )}
+                              />
+                            )}
+                            {!topicTree.parent && (!topicTree.children || topicTree.children.length === 0) && (
+                              <Alert message="无父子话题关系" type="info" />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  },
+                  {
+                    key: 'relations',
+                    label: `关联 (${relations.length})`,
+                    children: (
+                      <List
+                        size="small"
+                        dataSource={relations}
+                        renderItem={(item) => (
+                          <List.Item>
+                            <a onClick={() => handleTopicClick({ topic_id: item.topic_id, name: item.name, topic_type: item.topic_type, status: item.status })}>
+                              {item.name}
+                            </a>
+                            <Tag color="blue">相似度: {item.similarity?.toFixed(2)}</Tag>
+                          </List.Item>
+                        )}
+                      />
+                    )
+                  }
+                ]}
+              />
+            </Card>
+          </Col>
+        )}
+      </Row>
     </div>
   )
 }
