@@ -1017,6 +1017,79 @@ async def batch_update_embeddings():
         return {"status": "error", "message": str(e)}
 
 
+# ==================== 关键信息提取 API ====================
+
+@app.post("/api/topics/{topic_id}/extract-keyinfo")
+async def extract_topic_keyinfo(topic_id: str):
+    """提取话题关键信息"""
+    try:
+        from api.keyinfo_service import extract_and_save_key_info
+        key_info = extract_and_save_key_info(topic_id)
+        if key_info:
+            return {"status": "success", "key_info": key_info}
+        return {"status": "no_messages", "message": "No messages to extract"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# ==================== 日报/周报 API ====================
+
+@app.post("/api/reports/daily")
+async def generate_daily_report(
+    agent_id: str = None,
+    date: str = None
+):
+    """生成日报"""
+    try:
+        from api.keyinfo_service import generate_daily_report, save_report
+        from datetime import datetime
+        
+        d = datetime.strptime(date, "%Y-%m-%d") if date else datetime.now()
+        report = generate_daily_report(agent_id, d)
+        
+        if agent_id and report and "生成失败" not in report:
+            save_report(agent_id, "daily-report", report)
+        
+        return {"status": "success", "report": report}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/reports/weekly")
+async def generate_weekly_report(
+    agent_id: str = None,
+    week: int = None
+):
+    """生成周报"""
+    try:
+        from api.keyinfo_service import generate_weekly_report, save_report
+        
+        report = generate_weekly_report(agent_id, week)
+        
+        if agent_id and report and "生成失败" not in report:
+            save_report(agent_id, "weekly-report", report)
+        
+        return {"status": "success", "report": report}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/reports/generate-all")
+async def generate_all_reports(report_type: str = "daily"):
+    """生成所有 Agent 的日报/周报"""
+    try:
+        from api.keyinfo_service import run_daily_report_task, run_weekly_report_task
+        
+        if report_type == "daily":
+            run_daily_report_task()
+        elif report_type == "weekly":
+            run_weekly_report_task()
+        
+        return {"status": "success", "message": f"{report_type} reports generated"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
