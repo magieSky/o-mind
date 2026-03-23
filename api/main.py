@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends, Header
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import create_engine, Column, String, DateTime, Text, JSON, Integer, and_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -349,16 +349,30 @@ class MemoryUpdate(BaseModel):
 class MemoryResponse(BaseModel):
     id: str
     content: str
-    tags: List[str]
+    tags: List[str] = []
     source: Optional[str] = None
     instance_id: str
     agent_id: Optional[str] = None
     meta: dict = {}
+    topic_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+    
+    # Pydantic validator to handle None values from database
+    @field_validator('tags', 'meta', mode='before')
+    @classmethod
+    def parse_json_fields(cls, v):
+        if v is None:
+            return {}
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except:
+                return v if isinstance(v, dict) else {}
+        return v
 
 
 # ============ 数据库连接 ============
