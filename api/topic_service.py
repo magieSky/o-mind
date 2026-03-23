@@ -495,6 +495,129 @@ def update_topic_embedding(topic_id: str):
     return False
 
 
+# ==================== 子话题支持 ====================
+
+def get_topic_tree(topic_id: str) -> Dict:
+    """获取话题的完整树结构（父话题 + 子话题）"""
+    engine = get_db()
+    
+    result = {
+        "topic_id": topic_id,
+        "parent": None,
+        "children": [],
+        "siblings": []
+    }
+    
+    with engine.connect() as conn:
+        # 获取当前话题信息
+        topic_result = conn.execute(text("""
+            SELECT id, name, topic_type, parent_topic_id, message_count, summary
+            FROM topics WHERE id = :topic_id
+        """), {"topic_id": topic_id}).fetchone()
+        
+        if not topic_result:
+            return result
+        
+        topic_id, name, topic_type, parent_topic_id, msg_count, summary = topic_result
+        
+        result["info"] = {
+            "name": name,
+            "topic_type": topic_type,
+            "message_count": msg_count,
+            "summary": summary
+        }
+        
+        # 获取父话题
+        if parent_topic_id:
+            parent_result = conn.execute(text("""
+                SELECT id, name, topic_type FROM topics WHERE id = :parent_id
+            """), {"parent_id": parent_topic_id}).fetchone()
+            
+            if parent_result:
+                result["parent"] = {
+                    "topic_id": parent_result[0],
+                    "name": parent_result[1],
+                    "topic_type": parent_result[2]
+                }
+        
+        # 获取子话题
+        children_result = conn.execute(text("""
+            SELECT id, name, topic_type, message_count, status
+            FROM topics WHERE parent_topic_id = :topic_id
+            ORDER BY started_at ASC
+        """), {"topic_id": topic_id}).fetchall()
+        
+        result["children"] = [
+            {
+                "topic_id": r[0],
+                "name": r[1],
+                "topic_type": r[2],
+                "message_count": r[3],
+                "status": r[4]
+            }
+            for r in children_result
+        ]
+        
+        # 获取同级话题（同一父话题的其他子话题）
+        if parent_topic_id:
+            siblings_result = conn.execute(text("""
+                SELECT id, name, topic_type, message_count, status
+                FROM topics WHERE parent_topic_id = :parent_id AND id != :topic_id
+                ORDER BY started_at ASC
+            """), {"parent_id": parent_topic_id, "topic_id": topic_id}).fetchall()
+            
+            result["siblings"] = [
+                {
+                    "topic_id": r[0],
+                    "name": r[1],
+                    "topic_type": r[2],
+                    "message_count": r[3],
+                    "status": r[4]
+                }
+                for r in siblings_result
+            ]
+    
+    return result
+
+
+def aggregate_subtopic_summaries(parent_topic_id: str) -> str:
+    """聚合所有子话题的摘要，生成父话题的汇总摘要"""
+    engine = get_db()
+    
+    with engine.connect() as conn:
+        # 获取所有子话题的摘要
+        result = conn.execute(text("""
+            SELECT t.name, m.content
+            FROM topics t
+            JOIN memories m ON m.topic_id = t.id
+            WHERE t.parent_topic_id = :parent_id
+            AND m.is_topic_summary = TRUE
+            ORDER BY t.started_at ASC
+        """), {"parent_id": parent_topic_id}).fetchall()
+    
+    if not result:
+        return ""
+    
+    # 构建聚合内容
+    combined = "## 子话题摘要汇总\n\n"
+    for name, content in result:
+        combined += f"### {name}\n{content}\n\n"
+    
+    # 调用 LLM 生成汇总摘要
+    prompt = f"""请根据以下子话题的摘要，生成一个汇总摘要：
+
+{combined}
+
+要求：
+1. 提炼核心主题
+2. 保留关键结论和待办事项
+3. 用中文回复，简洁明了
+4. 不超过300字
+"""
+    
+    return generate_summary_with_llm([], "", "汇总摘要")
+
+
 # ==================== 对外接口 ====================
 
 def process_message(agent_id: str, content: str, memory_id: str, role: str = "user"):
