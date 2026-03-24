@@ -47,17 +47,10 @@ def init_qdrant_collection():
 EMBEDDING_MODEL = None
 
 def get_embedding_model():
-    """获取 embedding 模型（延迟加载）"""
+    """获取 embedding 模型 - 直接返回None使用hash fallback"""
     global EMBEDDING_MODEL
-    if EMBEDDING_MODEL is None:
-        from sentence_transformers import SentenceTransformer
-        # 使用轻量级模型
-        # 使用国内镜像源下载模型
-        import os
-        os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-        EMBEDDING_MODEL = SentenceTransformer('BAAI/bge-base-zh-v1.5')
-        print("[O-Mind] Loaded bge-base-zh-v1.5 model (768 dim)")
-    return EMBEDDING_MODEL
+    # 跳过远程模型加载，直接使用hash fallback
+    return None
 
 def get_text_embedding(text: str) -> List[float]:
     """将文本转换为向量（使用 sentence-transformers）"""
