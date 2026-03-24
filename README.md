@@ -7,38 +7,32 @@
 - 🧠 **长久记忆** - 会话历史自动保存到本地数据库
 - 🔒 **私有化部署** - 所有数据存储在本地服务器，安全可控
 - ⚡ **自动化钩子** - 无需手动操作，自动完成记忆存取
-- 🔍 **向量搜索** - 支持语义相似度搜索（使用 bge-base-zh-v1.5）
+- 🔍 **向量搜索** - 支持语义相似度搜索
 - 📝 **会话摘要** - 每小时自动生成会话摘要，注入上下文
+- 🗣️ **智能话题摘要** - 自动识别话题边界，生成话题维度的摘要
+- 🔗 **跨会话关联** - 自动关联历史相关话题
+- 🏷️ **关键信息提取** - 自动提取话题中的关键信息（人名、任务、决策等）
+- 📊 **每日/每周报表** - 自动生成消费和使用报表
 - 🐳 **Docker 部署** - 一键部署，支持 Docker Compose
 - 🌐 **管理界面** - 可视化管理记忆和 Agent
 - 🔑 **多实例隔离** - 支持多个 OpenClaw 实例，每个实例独立记忆
-- 📝 **用户+助手消息** - 自动保存用户消息和 AI 回复
 - 🔄 **去重** - 自动检测重复内容，避免重复存储
-- 🎯 **相似度过滤** - 只返回相似度 >= 0.7 的结果
 
 ## 🏗️ 架构
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      OpenClaw Agent                          │
-│              (记忆测试员 / memory-tester)                    │
 └─────────────────────────┬───────────────────────────────────┘
-                        │ REST API
-                        ▼
+                          │ REST API
+                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    O-Mind API Server                         │
-│                  (FastAPI + Uvicorn)                        │
+│                    O-Mind API Server                          │
+│                  (FastAPI + Uvicorn)                         │
 ├─────────────────┬─────────────────┬───────────────────────┤
-│   MySQL         │   Qdrant        │   sentence-           │
-│  (结构化存储)    │  (向量数据库)    │   transformers       │
-│                 │                 │  (语义向量)            │
+│   MySQL         │   Qdrant        │   摘要生成             │
+│  (结构化存储)    │  (向量数据库)    │  (MiniMax LLM)       │
 └─────────────────┴─────────────────┴───────────────────────┘
-                              │
-                              ▼
-                   ┌─────────────────────┐
-                   │   Admin UI (可选)   │
-                   │   http://localhost:3000 │
-                   └─────────────────────┘
 ```
 
 ## 🚀 快速开始
@@ -47,7 +41,7 @@
 
 - Docker
 - Docker Compose
-- 建议 16GB+ 内存（用于 sentence-transformers 模型）
+- 建议 4GB+ 内存
 
 ### 1. 克隆项目
 
@@ -72,38 +66,9 @@ curl http://localhost:8000/health
 curl http://localhost:8000/api/memories
 ```
 
-### 4. 访问管理界面
-
-打开浏览器访问：http://localhost:3000
-
 ## 📡 API 接口
 
-### 创建记忆
-
-```bash
-curl -X POST http://localhost:8000/api/memories \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: key-prod-1" \
-  -d '{
-    "content": "用户喜欢蓝色",
-    "tags": ["preference", "color"],
-    "agent_id": "memory-tester"
-  }'
-```
-
-### 搜索记忆
-
-```bash
-# 向量语义搜索（推荐）
-curl "http://localhost:8000/api/memories?q=用户偏好" \
-  -H "X-API-Key: key-prod-1"
-
-# 按 Agent 筛选
-curl "http://localhost:8000/api/memories?agent_id=agent-1" \
-  -H "X-API-Key: key-prod-1"
-```
-
-### 其他接口
+### 记忆管理
 
 | 方法 | 路径 | 描述 |
 |------|------|------|
@@ -112,164 +77,108 @@ curl "http://localhost:8000/api/memories?agent_id=agent-1" \
 | GET | /api/memories/{id} | 获取单条 |
 | PUT | /api/memories/{id} | 更新记忆 |
 | DELETE | /api/memories/{id} | 删除记忆 |
-| GET | /api/stats | 获取统计信息 |
 
-## ⚓ Hook 自动化
+### 话题管理
 
-O-Mind 通过 Hook 实现自动化记忆管理：
-
-| Hook | 触发时机 | 行为 |
-|------|----------|------|
-| `before_prompt_build` | 每次 LLM 调用前 | 自动检索相关记忆并注入上下文 |
-| `agent_end` | Agent 完成后 | 自动保存用户消息和 AI 回复 |
-
-### 配置 Hook
-
-在 OpenClaw 配置中添加 plugin：
-
-```json
-{
-  "plugins": {
-    "entries": {
-      "o-mind": {
-        "enabled": true
-      }
-    }
-  }
-}
-```
-
-设置环境变量：
-
-```bash
-MEMORY_SERVER_URL=http://localhost:8000
-MEMORY_API_KEY=key-prod-1
-```
-
-## 🔍 搜索原理（混合模式）
-
-### 1. 向量语义搜索
-
-- 使用 **bge-base-zh-v1.5** 生成 768 维语义向量
-- 通过 **Qdrant** 向量数据库进行相似度匹配
-- 只返回相似度 >= 0.7 的结果
-
-### 2. 数据关联
-
-- Qdrant 存储向量 + 元数据（instance_id, agent_id）
-- MySQL 存储完整内容 + 标签 + 来源
-- 搜索时：Qdrant → 返回 ID → MySQL 查询完整数据
-
-### 3. 自动去重
-
-- 每次保存前检查相同内容是否已存在
-- 相同内容返回 `{"status": "duplicate"}` 不重复存储
-
-### 4. 会话摘要自动注入
-
-- 每小时自动生成会话摘要（使用 MiniMax M2.5）
-- 搜索时自动将最新摘要放到结果最前面
-- 摘要包含：主要话题、关键决策和解决方法、待处理事项
-
-## 🌐 多实例配置
-
-### 1. 配置 API Keys
-
-在 docker-compose.yml 中设置环境变量：
-
-```yaml
-environment:
-  - MEMORY_API_KEYS={"key-prod-1":{"instance_id":"prod-1","name":"生产环境"},"key-test-1":{"instance_id":"test-1","name":"测试环境"}}
-```
-
-### 2. OpenClaw 实例配置
-
-每个 OpenClaw 实例配置不同的 API Key：
-
-```json
-{
-  "env": {
-    "MEMORY_SERVER_URL": "http://o-mind-api:8000",
-    "MEMORY_API_KEY": "key-prod-1"
-  }
-}
-```
-
-## 🐳 部署
-
-### 开发环境
-
-```bash
-docker-compose up -d
-```
-
-### 端口配置
-
-| 服务 | 端口 | 说明 |
+| 方法 | 路径 | 描述 |
 |------|------|------|
-| O-Mind API | 8000 | REST API |
-| Admin UI | 3000 | 管理界面 |
-| MySQL | 3306 | 数据库 |
-| Qdrant | 6333 | 向量数据库 |
+| GET | /api/topics | 获取话题列表 |
+| GET | /api/topics/{id} | 获取话题详情 |
+| GET | /api/topics/{id}/relations | 获取关联话题 |
+| GET | /api/topics/{id}/tree | 获取话题树 |
+| POST | /api/topics/{id}/extract-keyinfo | 提取关键信息 |
 
-### 更新服务
+### 报表
+
+| 方法 | 路径 | 描述 |
+|------|------|------|
+| GET | /api/stats | 统计信息 |
+| POST | /api/reports/daily | 生成日报 |
+| POST | /api/reports/weekly | 生成周报 |
+| POST | /api/reports/generate-all | 生成所有报表 |
+
+## 🗣️ 智能话题系统
+
+### 话题识别
+
+O-Mind 自动识别对话中的话题边界：
+
+- **同一任务连续对话** - 检测为同一话题
+- **任务切换** - 通过"顺便"、"对了"、"回到"等关键词识别
+- **子话题衍生** - 从主任务衍生出的子话题
+- **跨会话关联** - 通过语义相似度关联历史话题
+
+### 话题状态
+
+| 状态 | 说明 |
+|------|------|
+| active | 进行中，有新消息 |
+| paused | 暂停，超过2小时无新消息 |
+| completed | 已完成 |
+| archived | 已归档 |
+
+### 话题摘要
+
+- 每10条消息自动生成/更新摘要
+- 支持增量续写（基于上一次摘要）
+- 摘要包含：任务目标、当前进展、待解决问题、后续计划
+
+### 关键信息提取
+
+自动从话题中提取：
+- 👤 人物（人名、角色）
+- 📋 任务（待办事项、分配的任务）
+- 💡 决策（关键决定、结论）
+- 📎 关联（相关话题、依赖关系）
+
+## 🏷️ 关键信息提取
+
+### 提取类型
+
+- **PERSON** - 人名、角色
+- **TASK** - 任务、待办
+- **DECISION** - 决策、结论
+- **PROJECT** - 项目名称
+- **ISSUE** - 问题、bug
+
+### API 调用
 
 ```bash
-# 重新构建镜像
-docker build -t o-mind:latest .
-
-# 重启容器
-docker restart o-mind-api
+curl -X POST http://localhost:8000/api/topics/{topic_id}/extract-keyinfo \
+  -H "X-API-Key: key-prod-1"
 ```
 
-## 🛠️ 项目结构
+### 返回示例
 
-```
-O-Mind/
-├── api/                      # FastAPI 服务
-│   ├── main.py              # 主服务代码（含向量搜索、摘要注入）
-│   └── summary_task.py       # 定时摘要任务
-├── admin-ui/                 # React 管理界面
-├── openclaw-plugin/          # OpenClaw Plugin
-├── docker-compose.yml        # Docker Compose 配置
-├── Dockerfile               # API 服务镜像
-├── requirements.txt         # Python 依赖
-└── README.md               # 项目说明
+```json
+{
+  "persons": ["张三", "李四"],
+  "tasks": ["优化数据库性能", "部署新功能"],
+  "decisions": ["使用Redis缓存", "迁移到云服务器"],
+  "projects": ["O-Mind项目", "OpenClaw平台"]
+}
 ```
 
-## 📋 环境变量
+## 📊 报表系统
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| MYSQL_HOST | MySQL 主机 | memory-mysql |
-| QDRANT_HOST | Qdrant 主机 | memory-qdrant |
-| MINIMAX_API_KEY | MiniMax API Key（用于摘要生成） | - |
-| MEMORY_API_KEYS | 多实例 API Keys (JSON) | - |
+### 自动报表
 
-## 📝 保存的内容
+- **日报** - 每日自动生成
+- **周报** - 每周一自动生成
+- **关键信息汇总** - 提取本周关键决策和任务
 
-### 有价值的记忆
+### 手动触发
 
-- ✅ 用户告诉的重要信息
-- ✅ 运维配置和设置
-- ✅ 项目背景和需求
-- ✅ 问题和解决方案
-- ✅ 工作摘要
-- ✅ **自动生成的会话摘要**（每小时）
+```bash
+# 生成日报
+curl -X POST http://localhost:8000/api/reports/daily
 
-### 会话摘要
+# 生成周报
+curl -X POST http://localhost:8000/api/reports/weekly
 
-- 每小时自动总结会话内容
-- 包含：主要话题、关键决策和解决方法、待处理事项
-- 摘要会累积（每次新摘要基于上一次的摘要）
-- 搜索时自动注入到上下文最前面
-
-### 自动过滤
-
-- ❌ 系统元数据（Conversation info、System:）
-- ❌ 调试日志（Traceback、mysql:）
-- ❌ 重复内容
-- ❌ 相似度 < 0.7 的内容
+# 生成所有报表
+curl -X POST http://localhost:8000/api/reports/generate-all
+```
 
 ## 🔧 故障排除
 
@@ -292,11 +201,6 @@ docker logs o-mind-api
 # 验证数据库连接
 curl http://localhost:8000/health
 ```
-
-### 向量搜索无结果
-
-- 确认 Qdrant 有数据：`docker exec o-mind-api python -c "from api.main import get_qdrant_client; c = get_qdrant_client(); print(len(c.scroll('memories', limit=1000)[0]))"`
-- 检查 MySQL 有数据：`docker exec o-mind-mysql mysql -uroot -p123456 -e "USE memory; SELECT COUNT(*) FROM memories;"`
 
 ## 📄 License
 
